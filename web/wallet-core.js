@@ -21,6 +21,7 @@
  }
  function notify(){document.dispatchEvent(new CustomEvent("flypow:wallet"));refreshHeader();}
  function refreshHeader(){
+  if(document.getElementById("wallet-session-v3"))return;
   const element=document.getElementById("wallet-link");if(element)element.textContent=keystore?keystore.address.slice(0,8)+"…"+keystore.address.slice(-4):t("Wallet");
  }
  async function create(password){

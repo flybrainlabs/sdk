@@ -9,11 +9,13 @@
     "tests/wallet_crypto.mjs": "tests/wallet_crypto.mjs",
     "tools/campaign_tools.mjs": "tools/campaign_tools.mjs",
     "tools/economy_v2_client.mjs": "tools/economy_v2_client.mjs",
+    "tools/mining_v3_client.mjs": "tools/mining_v3_client.mjs",
     "tools/target_dev_identity.mjs": "tools/target_dev_identity.mjs",
     "web/campaign-codec.mjs": "web/campaign-codec.mjs",
     "web/candidate-submission-v2.mjs": "web/candidate-submission-v2.mjs",
     "web/catalog-task.mjs": "web/catalog-task.mjs",
     "web/evidence-manifest.mjs": "web/evidence-manifest.mjs",
+    "web/mining-v3-codec.mjs": "web/mining-v3-codec.mjs",
     "web/receipt-v1.mjs": "web/receipt-v1.mjs",
     "web/response-record.mjs": "web/response-record.mjs",
     "web/service-outbox.mjs": "web/service-outbox.mjs",
@@ -21,7 +23,9 @@
     "web/target-protocol-v2.mjs": "web/target-protocol-v2.mjs",
     "web/target-response-record.mjs": "web/target-response-record.mjs",
     "web/target-round-client.mjs": "web/target-round-client.mjs",
-    "web/wallet-core.js": "web/wallet-core.js"
+    "web/wallet-core.js": "web/wallet-core.js",
+    "web/wallet-session-v3.mjs": "web/wallet-session-v3.mjs",
+    "tools/devnet_journal.mjs": "tools/devnet_journal.mjs"
   },
   "project": "flybrainlabs"
 }
