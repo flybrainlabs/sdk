@@ -1,7 +1,7 @@
 {
   "schema": "flybrain-component-v1",
   "repository": "sdk",
-  "owner": "flybrainwork",
+  "owner": "flybrainlabs",
   "workspaceFiles": {
     "tests/economic_ingest_transport.mjs": "tests/economic_ingest_transport.mjs",
     "tests/service_outbox.mjs": "tests/service_outbox.mjs",
@@ -22,5 +22,6 @@
     "web/target-response-record.mjs": "web/target-response-record.mjs",
     "web/target-round-client.mjs": "web/target-round-client.mjs",
     "web/wallet-core.js": "web/wallet-core.js"
-  }
+  },
+  "project": "flybrainlabs"
 }
