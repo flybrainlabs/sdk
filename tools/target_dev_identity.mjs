@@ -1,0 +1,10 @@
+// Private local development keys. Never export their bytes to logs or the site.
+import { createPrivateKey,createPublicKey,randomBytes,sign as nodeSign,verify as nodeVerify } from 'node:crypto';
+import { readFile,mkdir,writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
+import { canonical,id,unhex } from '../web/target-protocol-v2.mjs';
+export async function keyFile(path){await mkdir(dirname(path),{recursive:true,mode:0o700});let secret;try{secret=await readFile(path);}catch(e){if(e.code!=='ENOENT')throw e;secret=randomBytes(32);await writeFile(path,secret,{flag:'wx',mode:0o600});}if(secret.length!==32)throw new Error('Private key width');const key=createPrivateKey({key:Buffer.concat([Buffer.from('302e020100300506032b657004220420','hex'),secret]),format:'der',type:'pkcs8'});return {key,publicKey:createPublicKey(key).export({format:'der',type:'spki'}).subarray(-32).toString('hex')};}
+export async function request(key,action,roundId,payload,requestId=randomBytes(16).toString('hex')){const v={publicKey:key.publicKey,action,requestId,roundId,payload};return {...v,signature:nodeSign(null,unhex(await id('authority-action',v)),key.key).toString('hex')};}
+export async function verified(publicKey,domain,v){const {signature,...unsigned}=v,k=createPublicKey({key:Buffer.concat([Buffer.from('302a300506032b6570032100','hex'),Buffer.from(publicKey,'hex')]),format:'der',type:'spki'});if(!nodeVerify(null,unhex(await id(domain,unsigned)),k,Buffer.from(signature||'','hex')))throw new Error('Authority signature invalid');return v;}
+export async function api(base,path,body=null,{method='POST',headers={}}={}){const response=await fetch(base+'/api/target-mining/v2/'+path,{method:body===null?'GET':method,headers:body===null?headers:{'Content-Type':'application/json',...headers},body:body===null?undefined:JSON.stringify(body),signal:AbortSignal.timeout(60000)});if(!response.ok){const v=await response.json().catch(()=>({code:'HTTP',message:String(response.status)}));const e=new Error(v.message);e.status=response.status;e.code=v.code;throw e;}return response;}
+export {canonical};

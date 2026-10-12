@@ -1,0 +1,12 @@
+// Isolated transport responses. Signatures are tested by the Rust authority;
+// this fixture tests ordering, quarantine and a lost response across restart.
+import {createServer} from 'node:http';import {spawn} from 'node:child_process';
+import {mkdtemp,writeFile,readFile} from 'node:fs/promises';import {join} from 'node:path';import assert from 'node:assert/strict';
+const root=await mkdtemp('data/prepared/explorer-20261012/ingest-fault-'),seen=[],business=new Set();let dropped=false;
+const server=createServer(async(req,res)=>{let raw='';for await(const b of req)raw+=b;const v=JSON.parse(raw),f=v.payload.fact;seen.push(f.kind);
+ if(f.kind==='bad-fixture'){res.writeHead(400,{'content-type':'application/json'});res.end('{"code":"INVALID_INPUT"}');return;}
+ const duplicate=business.has(f.eventId);business.add(f.eventId);if(f.kind==='slot-reserved'&&!dropped){dropped=true;req.socket.destroy();return;}
+ res.setHeader('content-type','application/json');res.end(JSON.stringify({committed:!duplicate,duplicate}));});await new Promise(r=>server.listen(0,'127.0.0.1',r));
+for(const [i,kind]of ['slot-reserved','global-issued','stage-opened','bad-fixture'].entries()){const eventId=(i+1).toString(16).padStart(64,'0');await writeFile(join(root,eventId+'.json'),JSON.stringify({state:'pending',envelope:{payload:{fact:{eventId,kind,sourceLocator:{slot:'1'}}}}}));}
+const run=()=>new Promise((resolve,reject)=>{const p=spawn(process.execPath,['tools/economic_ingest_v2.mjs','--api','http://127.0.0.1:'+server.address().port,'--outbox',root]);let o='',e='';p.stdout.on('data',b=>o+=b);p.stderr.on('data',b=>e+=b);p.on('exit',code=>code===0?resolve(JSON.parse(o)):reject(new Error(e)));});
+try{const first=await run();assert.deepEqual(seen.slice(0,3),['global-issued','stage-opened','slot-reserved']);assert.equal(first.committed,2);assert.equal(first.quarantined,2);const second=await run();assert.equal(second.committed,1);assert.equal(business.size,3);const slot=JSON.parse(await readFile(join(root,'1'.padStart(64,'0')+'.json'),'utf8'));assert.equal(slot.state,'committed');assert.equal(slot.receipt.duplicate,true);assert.equal(slot.envelope.payload.fact.eventId,'1'.padStart(64,'0'));console.log(JSON.stringify({passed:3,injectedTransportFaults:true,checks:['dependency-order','bad event quarantined without blocking later events','lost reply restored with original immutable event id']}));}finally{server.close();}
