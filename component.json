@@ -31,7 +31,9 @@
     "web/wallet-plan-v3.mjs": "web/wallet-plan-v3.mjs",
     "web/wallet-session-v3.mjs": "web/wallet-session-v3.mjs",
     "web/wallet-funding-v3.mjs": "web/wallet-funding-v3.mjs",
-    "tests/wallet_funding_v3.mjs": "tests/wallet_funding_v3.mjs"
+    "tests/wallet_funding_v3.mjs": "tests/wallet_funding_v3.mjs",
+    "web/wallet-rpc-v3.mjs": "web/wallet-rpc-v3.mjs",
+    "tests/wallet_rpc_transport_v3.mjs": "tests/wallet_rpc_transport_v3.mjs"
   },
   "project": "flybrainlabs"
 }
