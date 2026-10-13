@@ -29,5 +29,26 @@ export class CandidateSubmissionV2 {
     m.revealRequest||=await this.client.request('reveal',r.roundId,{claimId:m.claimId,manifest,salt:m.salt});await this.changed(m,'revealing');await this.client.post('claims/'+m.claimId+'/reveal',m.revealRequest,'reveal-receipt');await this.changed(m,'verifying');return m;
   }
   async reconcileFinancial(m){if(!this.financial||!m.financial)return m;const latest=await this.financial.candidateRecord(m.claimId,m.financialScope?.wallet);if(latest){m.financial=latest;await this.store.update(m);this.onChange(m);}return m;}
-  async reconcile(m){if(!m.claimId)return m;const r=await this.client.roundState(m.roundId),s=await this.client.claimState(m.claimId);m.receipt=s.receipt;m.validVotes=s.validVotes??0;m.invalidVotes=s.invalidVotes??0;m.quorum=s.quorum??2;m.verificationQueue=s.verificationQueue??null;m.terminalReason=s.terminalReason||null;m.independentlyReplayed=s.status==='VALID';m.phase=s.status.toLowerCase();if(r.winner){m.won=r.winner.claimId===m.claimId;if(m.won)m.phase='winner-confirmed';else if(s.status==='VALID')m.phase='saved-not-selected';m.authorityWinner=r.winner;}else if(r.status==='EXPIRED_NO_VALID_RESULT'&&s.status==='VALID')m.phase='round-expired-no-valid-result';m.terminalCompetition=["INVALID","TIMED_OUT"].includes(s.status)||(s.status==='VALID'&&(!!r.winner||r.status==='EXPIRED_NO_VALID_RESULT'));await this.store.update(m);await this.reconcileFinancial(m);this.onChange(m);return m;}
+  async reconcile(m){
+    if(!m.claimId)return m;
+    const r=await this.client.roundState(m.roundId);
+    let s;
+    try{s=await this.client.claimState(m.claimId);}catch(error){
+      // A local claim ID can be saved before the authority admits it. A signed
+      // closed round and no receipt let us retire that lookup, keeping artifacts.
+      const closed=['FINALIZED','EXPIRED_NO_VALID_RESULT'].includes(r.status);
+      if(error.status!==404||m.receipt||!closed||!Number.isFinite(r.serverTime)||r.serverTime<m.round.pre.claimDeadline)throw error;
+      m.phase='claim-not-recorded';m.terminalCompetition=true;m.claimNotRecorded=true;
+      m.terminalReason='No authority claim found after the round closed; local results retained';
+      await this.store.update(m);await this.reconcileFinancial(m);this.onChange(m);return m;
+    }
+    m.receipt=s.receipt;m.validVotes=s.validVotes??0;m.invalidVotes=s.invalidVotes??0;
+    m.quorum=s.quorum??2;m.verificationQueue=s.verificationQueue??null;
+    m.terminalReason=s.terminalReason||null;m.claimNotRecorded=false;
+    m.independentlyReplayed=s.status==='VALID';m.phase=s.status.toLowerCase();
+    if(r.winner){m.won=r.winner.claimId===m.claimId;if(m.won)m.phase='winner-confirmed';else if(s.status==='VALID')m.phase='saved-not-selected';m.authorityWinner=r.winner;}
+    else if(r.status==='EXPIRED_NO_VALID_RESULT'&&s.status==='VALID')m.phase='round-expired-no-valid-result';
+    m.terminalCompetition=['INVALID','TIMED_OUT'].includes(s.status)||(s.status==='VALID'&&(!!r.winner||r.status==='EXPIRED_NO_VALID_RESULT'));
+    await this.store.update(m);await this.reconcileFinancial(m);this.onChange(m);return m;
+  }
 }
