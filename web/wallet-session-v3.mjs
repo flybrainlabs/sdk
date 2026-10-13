@@ -7,6 +7,7 @@ import {addresses,intentMessage,decodeGrant,operationData,Reader,meta,system} fr
 import {unhex,id,commitment} from './target-protocol-v2.mjs';
 import {hex} from './mining-v3-codec.mjs';
 import {adoptWalletPlan} from './wallet-plan-v3.mjs';
+import {miningFundingGate,fundingFingerprint,fundingError} from './wallet-funding-v3.mjs';
 const b64=b=>btoa(String.fromCharCode(...b)),decode64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
 const connectionKey='flybrainlabs-wallet-connection-v3',loginKey='flybrainlabs-wallet-login-v3';
 function readStorage(storage,key){try{return JSON.parse(globalThis[storage].getItem(key)||'null');}catch{return null;}}
@@ -50,7 +51,7 @@ export class WalletSession extends EventTarget {
     }catch(error){if(gen===this.generation){this.generation++;this.reset();this.connectionState='reconnect-required';this.changed();}throw error;}
     finally{if(gen===this.generation||!this.account&&!this.wallet){this.connecting=false;this.changed();}}
   }
-  reset(disconnect=true){if(disconnect)this.wallet=null;this.account=null;this.login=null;this.balances=null;this.history=null;this.grant=null;this.error=null;}
+  reset(disconnect=true){if(disconnect)this.wallet=null;this.account=null;this.login=null;this.balances=null;this.history=null;this.grant=null;this.fundingIssue=null;this.error=null;}
   async signIn(){if(!this.account)throw new Error('Connect a wallet first');const gen=this.generation,address=this.account.address,wallet=this.wallet,account=this.account,q=await this.api('challenge',{body:{address}});this.guard(gen,address);let output;
     if(wallet.features['solana:signIn']){[output]=await wallet.features['solana:signIn'].signIn(q.input);if(output.account.address!==address)throw new Error('Signing wallet changed');}
     else{[output]=await wallet.features['solana:signMessage'].signMessage({account,message:new TextEncoder().encode(q.message)});}
@@ -86,14 +87,17 @@ export class WalletSession extends EventTarget {
     this.guard(gen,address);await this.refresh();return receipt;
   }
   async requireFunding(round,client){
+    if(!this.account)throw fundingError('wallet-required');
+    if(!this.login||Number(this.login.expiresAt)<=Date.now()/1000){if(this.login)this.clearLogin();throw fundingError('wallet-login-required');}
     const gen=this.generation,address=this.account?.address;const live=await this.api('configuration',{auth:null});this.guard(gen,address);
     if(live.stage!==this.config.stage){const response=await fetch('/assets/data/wallet-mining-v3.json',{cache:'no-store'});if(!response.ok)throw new Error('Published wallet plan unavailable');const approved=await response.json();this.guard(gen,address);this.config=adoptWalletPlan(this.config,approved,live);this.changed();}
     if(!live.enabled||['genesisHash','programId','mint','policyHash','stage'].some(k=>live[k]!==this.config[k]))throw new Error('Wallet gateway does not match the frozen plan');await this.refresh();this.guard(gen,address);const plan=this.config.units.find(u=>u.goalId===round?.pre.goalId);
-    if(!this.config.enabled||!plan)throw new Error('This round has no frozen reward budget');if(!this.grant)throw new Error('Create or renew a finite rent grant');
+    if(!this.config.enabled||!plan||this.balances?.funding?.state==='complete')throw fundingError('funding-unavailable');if(!this.grant)throw fundingError('funding-required');
     const quote=BigInt(await this.connection.getMinimumBalanceForRentExemption(1024)),prepaid=BigInt((await this.connection.getAccountInfo(this.a.result(this.a.unit(unhex(plan.economicTaskId))),'finalized'))?.lamports||0),required=quote>prepaid?quote-prepaid:0n;
-    if(BigInt(this.grant.available)<required||BigInt(this.grant.maxResultRent)<required||BigInt(this.grant.maxSpend)-BigInt(this.grant.spent)<required)throw new Error('Insufficient finite result-rent credit');
-    if(!await sessionPair(this.keyScope()))throw new Error('Renew this grant for the current device');this.guard(gen,address);const request=await client.request('wallet-participation-v3',round.roundId,{wallet:address,grant:this.grant.address});this.guard(gen,address);await this.api('participation',{body:{request}});this.guard(gen,address);return {schema:'flybrainlabs-candidate-funding-v3',wallet:address,grant:this.grant.address,generation:this.grant.generation,session:this.grant.session,clientGeneration:gen};
+    if(BigInt(this.grant.available)<required||BigInt(this.grant.maxResultRent)<required||BigInt(this.grant.maxSpend)-BigInt(this.grant.spent)<required){this.guard(gen,address);this.fundingIssue={scope:fundingFingerprint(this.config,this.account,this.grant,round),code:'funding-insufficient'};this.changed();throw fundingError('funding-insufficient');}
+    if(!await sessionPair(this.keyScope())){this.guard(gen,address);this.fundingIssue={scope:fundingFingerprint(this.config,this.account,this.grant,round),code:'funding-device-required'};this.changed();throw fundingError('funding-device-required');}this.guard(gen,address);const request=await client.request('wallet-participation-v3',round.roundId,{wallet:address,grant:this.grant.address});this.guard(gen,address);await this.api('participation',{body:{request}});this.guard(gen,address);this.fundingIssue=null;return {schema:'flybrainlabs-candidate-funding-v3',wallet:address,grant:this.grant.address,generation:this.grant.generation,session:this.grant.session,clientGeneration:gen};
   }
+  miningGate(round){return miningFundingGate({config:this.config,account:this.account,login:this.login,balances:this.balances,grant:this.grant,round,issue:this.fundingIssue});}
   async reportAttempt(m,client,state){if(!this.login||this.account?.address!==m.financialScope?.wallet)return;const scope=m.financialScope,request=await client.request('wallet-attempt-v3',m.roundId,{wallet:scope.wallet,grant:scope.grant,candidateId:m.candidateId,state}),participation=await client.request('wallet-participation-v3',m.roundId,{wallet:scope.wallet,grant:scope.grant});return this.api('attempts',{body:{request,participation}});}
   async candidateRecord(claim,wallet){if(!this.login||this.account?.address!==wallet)return null;const gen=this.generation,value=await this.api('candidate/'+claim);this.guard(gen,wallet);if(value.wallet!==wallet)throw new Error('Candidate wallet mismatch');return value;}
   async acceptCandidate(m,client){

@@ -29,7 +29,9 @@
     "web/target-round-client.mjs": "web/target-round-client.mjs",
     "web/wallet-core.js": "web/wallet-core.js",
     "web/wallet-plan-v3.mjs": "web/wallet-plan-v3.mjs",
-    "web/wallet-session-v3.mjs": "web/wallet-session-v3.mjs"
+    "web/wallet-session-v3.mjs": "web/wallet-session-v3.mjs",
+    "web/wallet-funding-v3.mjs": "web/wallet-funding-v3.mjs",
+    "tests/wallet_funding_v3.mjs": "tests/wallet_funding_v3.mjs"
   },
   "project": "flybrainlabs"
 }
