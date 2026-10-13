@@ -8,6 +8,7 @@
     "tests/service_outbox.mjs": "tests/service_outbox.mjs",
     "tests/settlement_transport.test.mjs": "tests/settlement_transport.test.mjs",
     "tests/wallet_crypto.mjs": "tests/wallet_crypto.mjs",
+    "tests/wallet_plan_v3.mjs": "tests/wallet_plan_v3.mjs",
     "tools/campaign_tools.mjs": "tools/campaign_tools.mjs",
     "tools/devnet_journal.mjs": "tools/devnet_journal.mjs",
     "tools/economy_v2_client.mjs": "tools/economy_v2_client.mjs",
@@ -27,6 +28,7 @@
     "web/target-response-record.mjs": "web/target-response-record.mjs",
     "web/target-round-client.mjs": "web/target-round-client.mjs",
     "web/wallet-core.js": "web/wallet-core.js",
+    "web/wallet-plan-v3.mjs": "web/wallet-plan-v3.mjs",
     "web/wallet-session-v3.mjs": "web/wallet-session-v3.mjs"
   },
   "project": "flybrainlabs"

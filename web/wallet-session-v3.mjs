@@ -6,6 +6,7 @@ import {Buffer} from 'buffer';
 import {addresses,intentMessage,decodeGrant,operationData,Reader,meta,system} from '../tools/mining_v3_client.mjs';
 import {unhex,id,commitment} from './target-protocol-v2.mjs';
 import {hex} from './mining-v3-codec.mjs';
+import {adoptWalletPlan} from './wallet-plan-v3.mjs';
 const b64=b=>btoa(String.fromCharCode(...b)),decode64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
 const connectionKey='flybrainlabs-wallet-connection-v3',loginKey='flybrainlabs-wallet-login-v3';
 function readStorage(storage,key){try{return JSON.parse(globalThis[storage].getItem(key)||'null');}catch{return null;}}
@@ -85,7 +86,9 @@ export class WalletSession extends EventTarget {
     this.guard(gen,address);await this.refresh();return receipt;
   }
   async requireFunding(round,client){
-    const gen=this.generation,address=this.account?.address;const live=await this.api('configuration',{auth:null});if(!live.enabled||['genesisHash','programId','mint','policyHash','stage'].some(k=>live[k]!==this.config[k]))throw new Error('Wallet gateway does not match the frozen plan');this.guard(gen,address);await this.refresh();this.guard(gen,address);const plan=this.config.units.find(u=>u.goalId===round?.pre.goalId);
+    const gen=this.generation,address=this.account?.address;const live=await this.api('configuration',{auth:null});this.guard(gen,address);
+    if(live.stage!==this.config.stage){const response=await fetch('/assets/data/wallet-mining-v3.json',{cache:'no-store'});if(!response.ok)throw new Error('Published wallet plan unavailable');const approved=await response.json();this.guard(gen,address);this.config=adoptWalletPlan(this.config,approved,live);this.changed();}
+    if(!live.enabled||['genesisHash','programId','mint','policyHash','stage'].some(k=>live[k]!==this.config[k]))throw new Error('Wallet gateway does not match the frozen plan');await this.refresh();this.guard(gen,address);const plan=this.config.units.find(u=>u.goalId===round?.pre.goalId);
     if(!this.config.enabled||!plan)throw new Error('This round has no frozen reward budget');if(!this.grant)throw new Error('Create or renew a finite rent grant');
     const quote=BigInt(await this.connection.getMinimumBalanceForRentExemption(1024)),prepaid=BigInt((await this.connection.getAccountInfo(this.a.result(this.a.unit(unhex(plan.economicTaskId))),'finalized'))?.lamports||0),required=quote>prepaid?quote-prepaid:0n;
     if(BigInt(this.grant.available)<required||BigInt(this.grant.maxResultRent)<required||BigInt(this.grant.maxSpend)-BigInt(this.grant.spent)<required)throw new Error('Insufficient finite result-rent credit');
