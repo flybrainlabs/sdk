@@ -89,3 +89,8 @@ verification. Public receipts are in the contracts repository under
 archives remain outside source repositories. The two-unit acceptance budget is
 complete. Future paid work requires a new prospectively frozen finite plan.
 Actual extension-wallet and physical-device confirmation remain separate gates.
+
+
+## Community transport
+
+`web/community-client.mjs` reuses WalletSession account/login, Bearer/CSRF authentication and stale wallet guards for Social APIs. Community sign-in does not require an available balance RPC or grant. Point and allocation amounts remain distinct; exported token amounts are integer atom strings.

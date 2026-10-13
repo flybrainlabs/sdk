@@ -25,7 +25,8 @@
     "web/target-round-client.mjs": "web/target-round-client.mjs",
     "web/wallet-core.js": "web/wallet-core.js",
     "web/wallet-session-v3.mjs": "web/wallet-session-v3.mjs",
-    "tools/devnet_journal.mjs": "tools/devnet_journal.mjs"
+    "tools/devnet_journal.mjs": "tools/devnet_journal.mjs",
+    "web/community-client.mjs": "web/community-client.mjs"
   },
   "project": "flybrainlabs"
 }
