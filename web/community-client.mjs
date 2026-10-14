@@ -16,4 +16,9 @@ export class CommunityClient {
   }
   async signIn(){if(!this.session?.account){await this.session?.requestConnection();return false;}if(!this.session.login){try{await this.session.signIn();}catch(error){if(!this.session.login)throw error;}}return !!this.session.login;}
   async freshSignIn(){if(!this.session?.account||!await this.signIn())return false;if(this.session.login.expiresAt-28800<Date.now()/1000-240){try{await this.session.signIn();}catch(error){if(!this.session.login)throw error;}}return true;}
+  register(inviteCode=null){return this.request('/api/social/register',{authenticated:true,body:inviteCode?{inviteCode}:{}});}
+  checkIn(){return this.request('/api/social/check-in',{authenticated:true,body:{}});}
+  invite(create=false){return this.request('/api/social/invite',{authenticated:true,...(create?{body:{}}:{})});}
+  dailyChallenge(create=false){return this.request('/api/social/daily-x/challenge',{authenticated:true,...(create?{body:{}}:{})});}
+  verifyDailyPost(challengeId,postUrl){return this.request('/api/social/daily-x/verify',{authenticated:true,body:{challengeId,postUrl}});}
 }
