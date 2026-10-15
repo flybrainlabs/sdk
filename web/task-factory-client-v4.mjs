@@ -1,0 +1,51 @@
+// Opt-in V4 client: authoritative task state is read directly from Solana.
+// The transaction sender belongs to the connected wallet, never a node relayer.
+import {Connection,PublicKey} from '@solana/web3.js';
+import {FactoryReader,addresses,instruction,meta} from '../tools/task_factory_v4_client.mjs';
+import {decodeTask,decodeSubmission,hex,fromHex,NONE,STATE} from './task-factory-v4-codec.mjs';
+import {canonical,hash} from './target-protocol-v2.mjs';
+import {makeRound} from './task-factory-v4-science.mjs';
+export function readerForDeployment(deployment,connection=null){
+  if(deployment?.schema!=='flybrainlabs-task-factory-deployment-v4'||deployment.enabled!==true||!['localnet','devnet'].includes(deployment.cluster))throw new Error('Task factory V4 is not enabled');
+  return new FactoryReader(connection||new Connection(deployment.rpcUrl,'finalized'),deployment.programId,{genesis:deployment.genesisHash,factoryAddress:deployment.factory,id:fromHex(deployment.factoryId),catalogRoot:fromHex(deployment.catalogRoot),policy:fromHex(deployment.policyHash)});
+}
+export async function verifyFactoryRound(reader,r){
+  const f=await reader.factory(),t=await reader.task(r.pre.taskIndex);
+  const expected=await makeRound({program:reader.program.toBase58(),genesis:reader.expected.genesis,factoryAddress:reader.expected.factoryAddress.toBase58(),taskAddress:reader.a.task(reader.expected.factoryAddress,t.index).toBase58(),factory:f,task:t,spec:r.specification});
+  if(r.roundId!==expected.roundId||hex(canonical(r.pre))!==hex(canonical(expected.pre))||hex(canonical(r.goal))!==hex(canonical(expected.goal))||hex(canonical(r.seeds))!==hex(canonical(expected.seeds)))throw new Error('Round differs from authoritative chain task');
+  if(t.state!==STATE.ACTIVE||f.activeIndex!==t.index||f.paused)throw new Error('Chain task is not open for computation');return expected;
+}
+export class FactoryMiningClientV4 {
+  constructor({deployment,wallet,send,contentStore,connection=null,onSnapshot=()=>{},onConnection=()=>{},onEvent=()=>{}}){
+    Object.assign(this,{deployment,wallet,send,contentStore,onSnapshot,onConnection,onEvent});this.reader=readerForDeployment(deployment,connection);this.rounds=new Map();this.generation=0;
+    this.network={networkId:deployment.genesisHash,campaignId:deployment.factory,protocolVersion:4};
+  }
+  async initialize(){
+    if(!this.wallet?.publicKey)throw new Error('Connect a wallet before mining');this.identity={publicKey:hex(new PublicKey(this.wallet.publicKey).toBytes())};await this.sync();
+    this.factorySubscription=this.reader.connection.onAccountChange(this.reader.expected.factoryAddress,()=>this.sync().catch(e=>this.disconnected(e)),'finalized');
+    this.timer=setInterval(()=>this.sync().catch(e=>this.disconnected(e)),60000);return this;
+  }
+  async specification(t){const bytes=await this.contentStore.get(hex(t.descriptor.content));if(await hash(bytes)!==hex(t.descriptor.content))throw new Error('Scientific content unavailable or corrupted');return JSON.parse(new TextDecoder().decode(bytes));}
+  async roundAt(index){const f=await this.reader.factory(),t=await this.reader.task(index),r=await makeRound({program:this.reader.program.toBase58(),genesis:this.network.networkId,factoryAddress:this.deployment.factory,taskAddress:this.reader.a.task(this.deployment.factory,index).toBase58(),factory:f,task:t,spec:await this.specification(t)});this.rounds.set(r.roundId,{round:r,task:t});return {f,t,r};}
+  async sync(){
+    if(this.syncing)return this.syncing;const generation=this.generation;
+    this.syncing=(async()=>{
+      if(hex(new PublicKey(this.wallet.publicKey).toBytes())!==this.identity?.publicKey)throw new Error('Connected wallet changed');
+      const f=await this.reader.factory();let r=null,t=null;
+      if(f.state===STATE.RUNNING&&f.activeIndex!==NONE&&!f.paused){const loaded=await this.roundAt(f.activeIndex);r=loaded.r;t=loaded.t;}
+      const slot=await this.reader.connection.getSlot('finalized'),now=await this.reader.connection.getBlockTime(slot);if(now===null)throw new Error('Finalized chain clock unavailable');
+      if(generation!==this.generation)return this.snapshot;
+      this.lastSync={serverTime:now,localAt:performance.now()};this.factory=f;this.round=r;this.online=true;
+      const address=t?this.reader.a.task(this.deployment.factory,t.index):null;
+      if(address?.toBase58()!==this.observedTask){if(this.taskSubscription!==undefined)await this.reader.connection.removeAccountChangeListener(this.taskSubscription);this.taskSubscription=undefined;this.observedTask=address?.toBase58();if(address)this.taskSubscription=this.reader.connection.onAccountChange(address,()=>this.sync().catch(e=>this.disconnected(e)),'finalized');}
+      const reason=r?null:f.paused?'paused':f.state===STATE.EXHAUSTED?'catalog-exhausted':f.state===STATE.CLOSED?'campaign-closed':now>=Number(f.deadline)?'campaign-deadline':f.state===STATE.DRAFT?'catalog-not-sealed':'waiting-for-advance';
+      this.snapshot={schema:'flybrainlabs-factory-snapshot-v4',serverTime:now,round:r,factory:f,task:t,reason};this.onConnection(true);this.onSnapshot(this.snapshot);return this.snapshot;
+    })().catch(e=>{this.disconnected(e);throw e;}).finally(()=>this.syncing=null);return this.syncing;
+  }
+  get serverNow(){return this.lastSync?this.lastSync.serverTime+(performance.now()-this.lastSync.localAt)/1000:null;}
+  disconnected(error){this.online=false;this.onConnection(false,error);}
+  async advance(){const f=await this.reader.factory();if(f.activeIndex!==NONE||f.nextIndex>=f.count)return;await this.send([instruction(this.reader.program,[meta(this.deployment.factory,true),meta(this.reader.a.task(this.deployment.factory,f.nextIndex),true)],3)]);await this.sync();}
+  // Both methods are optional telemetry. They never create or select tasks.
+  async heartbeat(){} async reportWork(){}
+  async dispose(){this.generation++;clearInterval(this.timer);for(const id of [this.factorySubscription,this.taskSubscription])if(id!==undefined)await this.reader.connection.removeAccountChangeListener(id);this.online=false;}
+}

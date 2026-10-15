@@ -94,3 +94,11 @@ Actual extension-wallet and physical-device confirmation remain separate gates.
 ## Community transport
 
 `web/community-client.mjs` reuses WalletSession account/login, Bearer/CSRF authentication and stale wallet guards for Social APIs. Community sign-in does not require an available balance RPC or grant. Point and allocation amounts remain distinct; exported token amounts are integer atom strings.
+
+## Contract task factory V4
+
+The opt-in V4 lifecycle freezes a predefined catalog on chain, accepts full replay
+attestations and advances tasks without a privileged relayer or minimum successful-
+task interval. Existing V3 records and grants are retained. Public activation is
+pending an approved calibrated catalog and finite funding. See
+[the lifecycle specification](https://github.com/flybrainlabs/docs/blob/feat/contract-task-factory-v4-20261015/docs/CONTRACT_TASK_FACTORY_V4.md).

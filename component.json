@@ -33,7 +33,17 @@
     "web/wallet-funding-v3.mjs": "web/wallet-funding-v3.mjs",
     "tests/wallet_funding_v3.mjs": "tests/wallet_funding_v3.mjs",
     "web/wallet-rpc-v3.mjs": "web/wallet-rpc-v3.mjs",
-    "tests/wallet_rpc_transport_v3.mjs": "tests/wallet_rpc_transport_v3.mjs"
+    "tests/wallet_rpc_transport_v3.mjs": "tests/wallet_rpc_transport_v3.mjs",
+    "web/task-factory-v4-codec.mjs": "web/task-factory-v4-codec.mjs",
+    "web/task-factory-v4-science.mjs": "web/task-factory-v4-science.mjs",
+    "tools/task_factory_v4_client.mjs": "tools/task_factory_v4_client.mjs",
+    "web/task-factory-client-v4.mjs": "web/task-factory-client-v4.mjs",
+    "web/task-factory-transactions-v4.mjs": "web/task-factory-transactions-v4.mjs",
+    "web/task-factory-result-v4.mjs": "web/task-factory-result-v4.mjs",
+    "tools/compile_task_catalog_v4.mjs": "tools/compile_task_catalog_v4.mjs",
+    "web/task-factory-v4-layout.mjs": "web/task-factory-v4-layout.mjs",
+    "tests/task_factory_v4.mjs": "tests/task_factory_v4.mjs",
+    "web/factory-content-store-v4.mjs": "web/factory-content-store-v4.mjs"
   },
   "project": "flybrainlabs"
 }
