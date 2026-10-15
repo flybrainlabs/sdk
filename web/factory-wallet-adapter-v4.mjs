@@ -5,6 +5,7 @@ import {Buffer} from 'buffer';
 import {canonical,hash} from './target-protocol-v2.mjs';
 import {waitForFinalizedSignature} from './wallet-rpc-v3.mjs';
 import {FactoryContentStoreV4} from './factory-content-store-v4.mjs';
+import {FactoryUserRpcV4} from './factory-user-rpc-v4.mjs';
 
 const base58=bytes=>{const a='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';let n=0n,s='';for(const b of bytes)n=n*256n+BigInt(b);while(n){s=a[Number(n%58n)]+s;n/=58n;}for(const b of bytes){if(b)break;s='1'+s;}return s;};
 async function transportRecord(key,value){
@@ -15,10 +16,11 @@ function auth(session){
   if(!session.account||!session.login||session.login.wallet!==session.account.address||Number(session.login.expiresAt)<=Date.now()/1000)throw Object.assign(new Error('Sign in with the connected wallet before mining'),{code:'wallet-login-required'});
   return {Authorization:'Bearer '+session.login.token,'X-Mining-CSRF':session.login.csrfToken};
 }
-export function factoryWalletAdapter({deployment,session,fetch:fetchImpl=globalThis.fetch}){
+export function factoryWalletAdapter({deployment,session,fetch:fetchImpl=globalThis.fetch,rpc:personalRpc=null}){
   const endpoint=new URL(deployment.rpcUrl),api=new URL(deployment.apiBase);
   if(deployment.cluster!=='devnet'||endpoint.origin!==api.origin||endpoint.pathname!=='/api/task-factory/v4/rpc'||api.protocol!=='https:'||api.username||api.password||api.search||api.hash)throw new Error('Unsupported V4 public gateway');
-  const transport=async(url,options={})=>{if(String(url)!==endpoint.href)throw new Error('Factory RPC transport changed');const request=JSON.parse(options.body),headers=new Headers(options.headers);if(request.method==='sendTransaction')for(const [k,v]of Object.entries(auth(session)))headers.set(k,v);const response=await fetchImpl(url,{...options,headers,signal:AbortSignal.timeout(15000),credentials:'omit',cache:'no-store'});if(!response.ok)throw Object.assign(new Error(response.status===429?'Chain gateway is busy; saved results are retained':'Chain gateway is temporarily unavailable'),{code:response.status===429?'RPC_RATE_LIMITED':'RPC_UNAVAILABLE',status:response.status});return response;};
+  const rpc=personalRpc||new FactoryUserRpcV4({deployment,fetch:fetchImpl});
+  const transport=async(url,options={})=>{if(String(url)!==endpoint.href)throw new Error('Factory RPC transport changed');if(rpc.endpoint)return rpc.request(options);const request=JSON.parse(options.body),headers=new Headers(options.headers);if(request.method==='sendTransaction')for(const [k,v]of Object.entries(auth(session)))headers.set(k,v);const response=await fetchImpl(url,{...options,headers,signal:AbortSignal.timeout(15000),credentials:'omit',cache:'no-store'});if(!response.ok)throw Object.assign(new Error(response.status===429?'Chain gateway is busy; saved results are retained':'Chain gateway is temporarily unavailable'),{code:response.status===429?'RPC_RATE_LIMITED':'RPC_UNAVAILABLE',status:response.status});return response;};
   const connection=new Connection(endpoint.href,{commitment:'finalized',disableRetryOnRateLimit:true,fetch:transport});
   const wallet={get publicKey(){return session.account?.publicKey||null;}};
   let queue=Promise.resolve();
@@ -62,5 +64,5 @@ export function factoryWalletAdapter({deployment,session,fetch:fetchImpl=globalT
         if(!Number.isSafeInteger(result.received)||result.received<=offset||result.received>blob.size)throw new Error('Artifact upload cursor mismatch');offset=result.received;
       }
     }});
-  return {wallet,send,connection,contentStore,assertMiningAuthorization:()=>{auth(session);}};
+  return {wallet,send,connection,contentStore,rpc,assertMiningAuthorization:()=>{auth(session);}};
 }
