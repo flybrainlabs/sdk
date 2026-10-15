@@ -7,6 +7,7 @@ import {canonical,hash} from './target-protocol-v2.mjs';
 import {makeRound} from './task-factory-v4-science.mjs';
 export function readerForDeployment(deployment,connection=null){
   if(deployment?.schema!=='flybrainlabs-task-factory-deployment-v4'||deployment.enabled!==true||!['localnet','devnet'].includes(deployment.cluster))throw new Error('Task factory V4 is not enabled');
+  if(deployment.personalRpcRequired&&!connection)throw Object.assign(new Error('RPC_REQUIRED'),{code:'RPC_REQUIRED'});
   return new FactoryReader(connection||new Connection(deployment.rpcUrl,'finalized'),deployment.programId,{genesis:deployment.genesisHash,factoryAddress:deployment.factory,id:fromHex(deployment.factoryId),catalogRoot:fromHex(deployment.catalogRoot),policy:fromHex(deployment.policyHash)});
 }
 export async function verifyFactoryRound(reader,r){
@@ -43,7 +44,11 @@ export class FactoryMiningClientV4 {
       if(address?.toBase58()!==this.observedTask){if(this.taskSubscription!==undefined)await this.reader.connection.removeAccountChangeListener(this.taskSubscription);this.taskSubscription=undefined;this.observedTask=address?.toBase58();if(address&&this.deployment.useWebSocket!==false)this.taskSubscription=this.reader.connection.onAccountChange(address,()=>this.sync().catch(e=>this.disconnected(e)),'finalized');}
       const reason=r?null:f.paused?'paused':f.state===STATE.EXHAUSTED?'catalog-exhausted':f.state===STATE.CLOSED?'campaign-closed':now>=Number(f.deadline)?'campaign-deadline':f.state===STATE.DRAFT?'catalog-not-sealed':'waiting-for-advance';
       this.snapshot={schema:'flybrainlabs-factory-snapshot-v4',serverTime:now,round:r,factory:f,task:t,reason,state:[STATE.EXHAUSTED,STATE.CLOSED].includes(f.state)?'RESEARCH_STAGE_COMPLETE':f.paused?'PAUSED':'READY'};this.lastError=null;this.onConnection(true);this.onSnapshot(this.snapshot);return this.snapshot;
-    })().catch(e=>{this.disconnected(e);throw e;}).finally(()=>this.syncing=null);return this.syncing;
+    })().catch(e=>{if(generation===this.generation)this.disconnected(e);throw e;}).finally(()=>this.syncing=null);return this.syncing;
+  }
+  async suspend(error){
+    this.generation++;clearInterval(this.timer);this.timer=null;this.round=null;this.factory=null;this.snapshot=null;this.lastSync=null;this.observedTask=null;this.disconnected(error);
+    for(const key of ['factorySubscription','taskSubscription'])if(this[key]!==undefined){const id=this[key];this[key]=undefined;await this.reader.connection.removeAccountChangeListener(id);}
   }
   get serverNow(){return this.lastSync?this.lastSync.serverTime+(performance.now()-this.lastSync.localAt)/1000:null;}
   disconnected(error){this.online=false;this.lastError=error?.message;this.onConnection(false,error);}

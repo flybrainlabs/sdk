@@ -7,19 +7,32 @@ const fail=code=>Object.assign(new Error(code),{code});
 const storage=name=>{try{return globalThis[name]||null;}catch{return null;}};
 function pacedFetch(fetchImpl){
   let tail=Promise.resolve(),queued=0,nextAt=0,nextSendAt=0;
-  return async(url,options)=>{
+  return async(url,options,guard=()=>{})=>{
     if(queued>=16)throw fail('RPC_UNAVAILABLE');queued++;
     const operation=tail.catch(()=>{}).then(async()=>{
       const send=JSON.parse(options.body).method==='sendTransaction',wait=Math.max(0,nextAt-Date.now(),send?nextSendAt-Date.now():0);
       if(wait)await new Promise(ok=>setTimeout(ok,wait));nextAt=Date.now()+250;if(send)nextSendAt=Date.now()+1100;
-      return fetchImpl(url,options);
+      guard();return fetchImpl(url,options);
     }).finally(()=>{queued--;});tail=operation;return operation;
   };
 }
-export function heliusRpcUrl(value){
-  let u;try{u=new URL(String(value).trim());}catch{throw fail('RPC_INVALID_URL');}
-  if(u.protocol!=='https:'||!['devnet.helius-rpc.com','mainnet.helius-rpc.com'].includes(u.hostname)||u.port||u.username||u.password||u.hash||!u.searchParams.get('api-key')?.trim()||u.href.length>2048)throw fail('RPC_INVALID_URL');
-  return u.href;
+export function heliusApiKey(value){
+  const key=String(value??'').trim();
+  if(!/^[A-Za-z0-9_-]{1,256}$/.test(key))throw fail('RPC_INVALID_KEY');
+  return key;
+}
+export function heliusRpcUrl(value,deployment){
+  const networks={devnet:['devnet','EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG'],'mainnet-beta':['mainnet','5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp']};
+  const network=networks[deployment?.cluster];
+  if(!network||deployment.genesisHash!==network[1])throw fail('RPC_DEPLOYMENT_NETWORK');
+  return 'https://'+network[0]+'.helius-rpc.com/?api-key='+encodeURIComponent(heliusApiKey(value));
+}
+function savedKey(saved,deployment){
+  if(saved.apiKey)return heliusApiKey(saved.apiKey);
+  // Migrate an existing URL preference without changing its storage scope.
+  const url=new URL(saved.endpoint),key=heliusApiKey(url.searchParams.get('api-key'));
+  if(url.href!==heliusRpcUrl(key,deployment))throw fail('RPC_INVALID_KEY');
+  return key;
 }
 export async function personalRpcFetchV4(url,options={},fetchImpl=globalThis.fetch){
   const headers=new Headers(options.headers);
@@ -36,8 +49,8 @@ export async function personalRpcFetchV4(url,options={},fetchImpl=globalThis.fet
     return new Response(JSON.stringify(value),{headers:{'Content-Type':'application/json'}});
   }catch(error){throw fail(['RPC_RATE_LIMITED','RPC_AUTH_FAILED','RPC_RESPONSE_LIMIT'].includes(error.code)?error.code:'RPC_UNAVAILABLE');}
 }
-export async function probePersonalRpcV4(url,deployment,fetchImpl=globalThis.fetch){
-  const endpoint=heliusRpcUrl(url),connection=new Connection(endpoint,{commitment:'finalized',disableRetryOnRateLimit:true,fetch:(u,o)=>personalRpcFetchV4(u,o,fetchImpl)});
+export async function probePersonalRpcV4(key,deployment,fetchImpl=globalThis.fetch){
+  const endpoint=heliusRpcUrl(key,deployment),connection=new Connection(endpoint,{commitment:'finalized',disableRetryOnRateLimit:true,fetch:(u,o)=>personalRpcFetchV4(u,o,fetchImpl)});
   try{await readerForDeployment(deployment,connection).factory();}
   catch(error){
     if(error.message==='Wrong chain genesis')throw fail('RPC_WRONG_NETWORK');
@@ -49,27 +62,29 @@ export async function probePersonalRpcV4(url,deployment,fetchImpl=globalThis.fet
 export class FactoryUserRpcV4 {
   #endpoint=null;
   constructor({deployment,fetch:fetchImpl=globalThis.fetch,session=storage('sessionStorage'),persistent=storage('localStorage'),onChange=()=>{}}){
-    Object.assign(this,{deployment,session,persistent,onChange});this.fetchImpl=pacedFetch(fetchImpl);this.key='flybrainlabs-personal-rpc-v4:'+deployment.genesisHash+':'+deployment.programId;this.value='';this.remember=false;this.status='default';this.busy=false;
-    for(const [source,remember]of [[persistent,true],[session,false]])try{const saved=JSON.parse(source?.getItem(this.key)||'null');if(saved?.schema==='flybrainlabs-personal-rpc-v4'&&saved.endpoint){this.value=heliusRpcUrl(saved.endpoint);this.remember=remember;break;}}catch{}
+    Object.assign(this,{deployment,session,persistent,onChange});this.fetchImpl=pacedFetch(fetchImpl);this.key='flybrainlabs-personal-rpc-v4:'+deployment.genesisHash+':'+deployment.programId;this.value='';this.remember=false;this.status='required';this.busy=false;this.generation=0;
+    for(const [source,remember]of [[persistent,true],[session,false]])try{const saved=JSON.parse(source?.getItem(this.key)||'null');if(saved?.schema==='flybrainlabs-personal-rpc-v4'&&(saved.apiKey||saved.endpoint)){this.value=savedKey(saved,deployment);this.remember=remember;break;}}catch{}
   }
   get endpoint(){return this.#endpoint;}
-  request(options){if(!this.#endpoint)throw fail('RPC_UNAVAILABLE');return personalRpcFetchV4(this.#endpoint,options,this.fetchImpl);}
+  get ready(){return !!this.#endpoint&&!this.busy;}
+  assertReady(){if(!this.ready)throw fail('RPC_REQUIRED');}
+  request(options){this.assertReady();const generation=this.generation;return personalRpcFetchV4(this.#endpoint,options,(url,o)=>this.fetchImpl(url,o,()=>{this.assertReady();if(generation!==this.generation)throw fail('RPC_CHANGED');}));}
   toJSON(){return {custom:!!this.#endpoint,remember:this.remember,status:this.status};}
-  async initialize(){if(!this.value)return;try{await this.apply(this.value,{remember:this.remember,persist:false});}catch{this.status='restore-unavailable';this.onChange();}}
+  async initialize(){if(!this.value)return;try{await this.apply(this.value,{remember:this.remember});}catch{this.status='restore-unavailable';this.onChange();}}
   apply(value,{remember=false,persist=true}={}){
     if(this.operation)return this.operation;
-    this.busy=true;this.status='checking';this.onChange();
+    this.generation++;this.#endpoint=null;this.busy=true;this.status='checking';this.onChange();
     this.operation=(async()=>{
-      const endpoint=await probePersonalRpcV4(value,this.deployment,this.fetchImpl);
+      const key=heliusApiKey(value),endpoint=await probePersonalRpcV4(key,this.deployment,this.fetchImpl);
       let saved=!persist;
-      if(persist)try{const target=remember?this.persistent:this.session;if(!target)throw new Error('Storage unavailable');target.setItem(this.key,JSON.stringify({schema:'flybrainlabs-personal-rpc-v4',endpoint}));(remember?this.session:this.persistent)?.removeItem(this.key);saved=true;}catch{}
-      this.#endpoint=endpoint;this.value=endpoint;this.remember=remember&&saved;this.status=!saved?'memory-only':this.remember?'custom-remembered':'custom-session';return this.toJSON();
+      if(persist)try{const target=remember?this.persistent:this.session;if(!target)throw new Error('Storage unavailable');target.setItem(this.key,JSON.stringify({schema:'flybrainlabs-personal-rpc-v4',apiKey:key}));(remember?this.session:this.persistent)?.removeItem(this.key);saved=true;}catch{}
+      this.#endpoint=endpoint;this.value=key;this.remember=remember&&saved;this.status=!saved?'memory-only':this.remember?'custom-remembered':'custom-session';return this.toJSON();
     })().catch(error=>{this.status=error.code||'RPC_UNAVAILABLE';throw error;}).finally(()=>{this.busy=false;this.operation=null;this.onChange();});
     return this.operation;
   }
   reset(){
     if(this.busy)throw fail('RPC_BUSY');
     let removed=true;for(const source of [this.session,this.persistent])try{source?.removeItem(this.key);}catch{removed=false;}
-    this.#endpoint=null;this.value='';this.remember=false;this.status=removed?'default':'reset-storage-unavailable';this.onChange();
+    this.generation++;this.#endpoint=null;this.value='';this.remember=false;this.status=removed?'required':'reset-storage-unavailable';this.onChange();
   }
 }
