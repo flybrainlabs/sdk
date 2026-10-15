@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {FactoryUserRpcV4,heliusRpcUrl,personalRpcFetchV4} from '../web/factory-user-rpc-v4.mjs';
 import {factoryWalletAdapter} from '../web/factory-wallet-adapter-v4.mjs';
+import {PublicKey} from '@solana/web3.js';
+import {AccountLayout,TOKEN_PROGRAM_ID} from '@solana/spl-token';
 const fixture=JSON.parse(await readFile('tests/vectors/factory-user-rpc-v4.json','utf8')),deployment=fixture.deployment;
 const key='fixture-not-a-secret',url='https://devnet.helius-rpc.com/?api-key='+key;
 const memory=()=>{const data=new Map([['unrelated-model-key','retained']]);return {getItem:k=>data.get(k)??null,setItem:(k,v)=>data.set(k,v),removeItem:k=>data.delete(k),data};};
-const session=memory(),persistent=memory(),calls=[];let wrongNetwork=false,wrongOwner=false,unavailable=false,gate=null;
+const session=memory(),persistent=memory(),calls=[];let wrongNetwork=false,wrongOwner=false,unavailable=false,gate=null,tokenReply=null;
 const transport=async(input,options)=>{
   if(gate)await gate;
   if(unavailable)throw new Error('Provider failed: '+url);
@@ -17,7 +19,8 @@ const transport=async(input,options)=>{
   assert(custom,'Mining must never use a shared RPC');
   const method=request.method;let result;
   if(method==='getGenesisHash')result=wrongNetwork?'wrong-network':deployment.genesisHash;
-  else if(method==='getAccountInfo'){const value=structuredClone(fixture.accounts[request.params[0]]);if(wrongOwner)value.owner='11111111111111111111111111111111';result={context:{slot:fixture.slot},value};}
+  else if(method==='getAccountInfo'){const value=structuredClone(fixture.accounts[request.params[0]]??tokenReply);if(wrongOwner&&value)value.owner='11111111111111111111111111111111';result={context:{slot:fixture.slot},value};}
+  else if(method==='getBalance')result={context:{slot:fixture.slot},value:50000000};
   else if(method==='sendTransaction')result='fixture-signature';
   else throw new Error('Unexpected fixture request');
   return new Response(JSON.stringify({jsonrpc:'2.0',id:request.id,result}));
@@ -43,14 +46,21 @@ const financial={account:{address:'fixture-wallet'},login:{wallet:'fixture-walle
 const adapter=factoryWalletAdapter({deployment,session:financial,fetch:transport,rpc:migrated});
 await adapter.connection.getGenesisHash();await adapter.connection.sendRawTransaction(Uint8Array.of(1,2,3));
 assert(calls.at(-1).target.startsWith('https://devnet.helius-rpc.com/'));assert(!calls.at(-1).headers.has('authorization'));
+const balance=await adapter.readBalances({wallet:'11111111111111111111111111111111'});assert.equal(balance.solLamports,'50000000');assert.equal(balance.tokenAtoms,'0');assert.equal(balance.source,'personal-rpc-v4');assert.equal(balance.historicalGrantsIncluded,false);
+const walletKey=new PublicKey('11111111111111111111111111111111'),tokenBytes=Buffer.alloc(AccountLayout.span),tokenFields={mint:new PublicKey(deployment.mint),owner:walletKey,amount:123456789n,delegateOption:0,delegate:walletKey,state:1,isNativeOption:0,isNative:0n,delegatedAmount:0n,closeAuthorityOption:0,closeAuthority:walletKey};
+AccountLayout.encode(tokenFields,tokenBytes);tokenReply={data:[tokenBytes.toString('base64'),'base64'],executable:false,owner:TOKEN_PROGRAM_ID.toBase58(),lamports:2039280,rentEpoch:0};
+assert.equal((await adapter.readBalances({wallet:walletKey.toBase58()})).tokenAtoms,'123456789');
+tokenReply.owner=walletKey.toBase58();await assert.rejects(adapter.readBalances({wallet:walletKey.toBase58()}));tokenReply.owner=TOKEN_PROGRAM_ID.toBase58();
+AccountLayout.encode({...tokenFields,mint:walletKey},tokenBytes);tokenReply.data[0]=tokenBytes.toString('base64');await assert.rejects(adapter.readBalances({wallet:walletKey.toBase58()}),/Token balance identity mismatch/);tokenReply=null;
 await adapter.contentStore.begin({submission:'fixture'});assert(calls.at(-1).target.endsWith('/uploads'));assert.equal(calls.at(-1).headers.get('authorization'),'Bearer fixture-project-session');assert(!calls.at(-1).target.includes('api-key'));
 migrated.reset();const count=calls.length;
 await assert.rejects(adapter.connection.getGenesisHash(),e=>e.message.includes('RPC_REQUIRED'));
 await assert.rejects(adapter.connection.sendRawTransaction(Uint8Array.of(1,2,3)),e=>e.message.includes('RPC_REQUIRED'));
 assert.throws(()=>adapter.assertMiningAuthorization(),e=>e.code==='RPC_REQUIRED');assert.equal(calls.length,count);
+await assert.rejects(adapter.readBalances({wallet:'11111111111111111111111111111111'}),e=>e.code==='RPC_REQUIRED');assert.equal(calls.length,count);
 assert.equal(session.getItem(rpc.key),null);assert.equal(persistent.getItem(rpc.key),null);assert.equal(persistent.getItem('unrelated-model-key'),'retained');
 // A reset also cancels a request already waiting in the paced lane.
 await migrated.apply(key);const queued=migrated.request({body:JSON.stringify({jsonrpc:'2.0',id:88,method:'getGenesisHash',params:[]})});migrated.reset();await assert.rejects(queued);assert.equal(calls.length,count+2);
 const sanitized=await personalRpcFetchV4(url,{headers:{Authorization:'never-forward','X-Mining-CSRF':'never-forward',Cookie:'never-forward'}},async(u,o)=>{assert(!new Headers(o.headers).has('authorization'));return new Response(JSON.stringify({jsonrpc:'2.0',id:1,error:{code:-32000,message:url,data:{secret:url}}}));});assert(!JSON.stringify(await sanitized.json()).includes(key));
 assert(calls.every(c=>c.target.startsWith('https://devnet.helius-rpc.com/')||c.target.endsWith('/uploads')));
-console.log(JSON.stringify({passed:true,groups:8,checks:['key-only input and endpoint selection from the pinned deployment','missing key blocks reads, broadcasts and mining authorization without a shared RPC','wrong network and contract identity fail closed','coalesced checks and explicit storage persistence','failed reload remains blocked without deleting preferences','existing URL preferences migrate to keys after revalidation','personal RPC strips project credentials; uploads retain authorization','reset cancels queued requests and retains model keys'],fixtureProvider:true,realHeliusKeyUsed:false,sharedRpcRequests:0,chainWrites:0}));
+console.log(JSON.stringify({passed:true,groups:9,checks:['key-only input and endpoint selection from the pinned deployment','missing key blocks reads, broadcasts and mining authorization without a shared RPC','wrong network and contract identity fail closed','coalesced checks and explicit storage persistence','failed reload remains blocked without deleting preferences','existing URL preferences migrate to keys after revalidation','personal RPC strips project credentials; uploads retain authorization','reset cancels queued requests and retains model keys','mining balances use the required personal provider without the legacy balance gateway'],fixtureProvider:true,realHeliusKeyUsed:false,sharedRpcRequests:0,chainWrites:0}));

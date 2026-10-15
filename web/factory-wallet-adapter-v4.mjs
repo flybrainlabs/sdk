@@ -2,6 +2,7 @@
 // reused for HTTP authorization; no V3 rent grant is created or consumed.
 import {Connection,PublicKey,Transaction} from '@solana/web3.js';
 import {Buffer} from 'buffer';
+import {getAssociatedTokenAddressSync,unpackAccount} from '@solana/spl-token';
 import {canonical,hash} from './target-protocol-v2.mjs';
 import {waitForFinalizedSignature} from './wallet-rpc-v3.mjs';
 import {FactoryContentStoreV4} from './factory-content-store-v4.mjs';
@@ -24,6 +25,16 @@ export function factoryWalletAdapter({deployment,session,fetch:fetchImpl=globalT
   const transport=async(url,options={})=>{if(String(url)!==endpoint.href)throw new Error('Factory RPC transport changed');return rpc.request(options);};
   const connection=new Connection(endpoint.href,{commitment:'finalized',disableRetryOnRateLimit:true,fetch:transport});
   const wallet={get publicKey(){return session.account?.publicKey||null;}};
+  async function readBalances({wallet:address}){
+    rpc.assertReady();const generation=rpc.generation,miner=new PublicKey(address),mint=new PublicKey(deployment.mint);
+    const guard=()=>{rpc.assertReady();if(generation!==rpc.generation)throw Object.assign(new Error('RPC_CHANGED'),{code:'RPC_CHANGED'});};
+    if(await connection.getGenesisHash()!==deployment.genesisHash)throw new Error('Factory chain identity changed');guard();
+    const sol=await connection.getBalance(miner,'finalized');guard();
+    if(!Number.isSafeInteger(sol)||sol<0)throw new Error('Invalid finalized SOL balance');
+    const ata=getAssociatedTokenAddressSync(mint,miner),info=await connection.getAccountInfo(ata,'finalized');guard();let amount=0n;
+    if(info){const token=unpackAccount(ata,info);if(!token.owner.equals(miner)||!token.mint.equals(mint))throw new Error('Token balance identity mismatch');amount=token.amount;}
+    return {wallet:address,mint:deployment.mint,cluster:deployment.cluster,solLamports:String(sol),tokenAtoms:String(amount),symbol:'FBW',grants:[],pendingRewardAtoms:null,asOf:Math.floor(Date.now()/1000),commitment:'finalized',source:'personal-rpc-v4',historicalGrantsIncluded:false};
+  }
   let queue=Promise.resolve();
   async function execute(instructions){
     rpc.assertReady();auth(session);const generation=session.generation,rpcGeneration=rpc.generation,address=session.account.address,guard=()=>{rpc.assertReady();if(rpc.generation!==rpcGeneration)throw Object.assign(new Error('RPC_CHANGED'),{code:'RPC_CHANGED'});session.guard(generation,address);};guard();
@@ -65,5 +76,5 @@ export function factoryWalletAdapter({deployment,session,fetch:fetchImpl=globalT
         if(!Number.isSafeInteger(result.received)||result.received<=offset||result.received>blob.size)throw new Error('Artifact upload cursor mismatch');offset=result.received;
       }
     }});
-  return {wallet,send,connection,contentStore,rpc,assertMiningAuthorization:()=>{rpc.assertReady();auth(session);}};
+  return {wallet,send,connection,contentStore,rpc,readBalances,assertMiningAuthorization:()=>{rpc.assertReady();auth(session);}};
 }
