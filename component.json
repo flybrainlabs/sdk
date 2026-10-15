@@ -43,7 +43,8 @@
     "tools/compile_task_catalog_v4.mjs": "tools/compile_task_catalog_v4.mjs",
     "web/task-factory-v4-layout.mjs": "web/task-factory-v4-layout.mjs",
     "tests/task_factory_v4.mjs": "tests/task_factory_v4.mjs",
-    "web/factory-content-store-v4.mjs": "web/factory-content-store-v4.mjs"
+    "web/factory-content-store-v4.mjs": "web/factory-content-store-v4.mjs",
+    "web/factory-wallet-adapter-v4.mjs": "web/factory-wallet-adapter-v4.mjs"
   },
   "project": "flybrainlabs"
 }

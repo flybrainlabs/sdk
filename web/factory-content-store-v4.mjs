@@ -2,10 +2,11 @@
 // multiple object stores or mirrors; every returned object is hash checked.
 import {hash,root} from './target-protocol-v2.mjs';
 export class FactoryContentStoreV4 {
-  constructor({sources,upload=null,maxBytes=128*1024*1024,fetch:transport=globalThis.fetch}){
+  constructor({sources,upload=null,authorizeUpload=null,maxBytes=128*1024*1024,fetch:transport=globalThis.fetch}){
     if(!Array.isArray(sources)||!sources.length||!Number.isSafeInteger(maxBytes)||maxBytes<1)throw new Error('Content sources and finite byte limit required');
-    this.sources=sources.map(base=>{const u=new URL(base);if(!['https:','http:'].includes(u.protocol)||u.username||u.password||u.search||u.hash)throw new Error('Invalid content source');return u.href.endsWith('/')?u.href:u.href+'/';});Object.assign(this,{upload,maxBytes,transport});
+    this.sources=sources.map(base=>{const u=new URL(base);if(!['https:','http:'].includes(u.protocol)||u.username||u.password||u.search||u.hash)throw new Error('Invalid content source');return u.href.endsWith('/')?u.href:u.href+'/';});Object.assign(this,{upload,authorizeUpload,maxBytes});this.transport=(...args)=>transport(...args);
   }
+  async begin(value){if(this.authorizeUpload)return this.authorizeUpload(value);}
   async get(identity,maxBytes=this.maxBytes){
     root(identity);maxBytes=Math.min(maxBytes,this.maxBytes);let last;
     for(const base of this.sources)try{

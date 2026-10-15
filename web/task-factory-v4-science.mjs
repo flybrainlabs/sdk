@@ -22,7 +22,7 @@ export async function makeRound({program,genesis,factoryAddress,taskAddress,fact
   const roundId=await id('contract-task-v4',{program,genesis,factory:factoryAddress,task:taskAddress,index:task.index,attempt:task.attempt,descriptorHash:hex(await scientificDescriptorHash(task.descriptor))});
   return {schema:'flybrainlabs-contract-round-v4',roundId,goal:spec.goal,seeds:spec.seeds,
     pre:{protocolVersion:4,networkId:genesis,programId:program,factoryAddress,taskAddress,taskIndex:task.index,attempt:task.attempt,
-      goalId:hex(task.descriptor.goal),descriptorHash:hex(await scientificDescriptorHash(task.descriptor)),requiredBackgrounds:spec.seeds.length,
+      goalId:hex(task.descriptor.goal),roundSequence:task.index+1,descriptorHash:hex(await scientificDescriptorHash(task.descriptor)),requiredBackgrounds:spec.seeds.length,
       openedAt:Number(task.openedAt),claimDeadline:Number(task.claimDeadline),revealDeadline:Number(task.revealDeadline),verificationDeadline:Number(task.verifyDeadline)},
     specification:spec,descriptor:Object.fromEntries(Object.entries(task.descriptor).map(([k,v])=>[k,v instanceof Uint8Array?hex(v):typeof v==='bigint'?String(v):k==='seeds'?v.map(String):v]))};
 }
