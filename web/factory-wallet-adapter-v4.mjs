@@ -36,16 +36,17 @@ export function factoryWalletAdapter({deployment,session,fetch:fetchImpl=globalT
     return {wallet:address,mint:deployment.mint,cluster:deployment.cluster,solLamports:String(sol),tokenAtoms:String(amount),symbol:'FBW',grants:[],pendingRewardAtoms:null,asOf:Math.floor(Date.now()/1000),commitment:'finalized',source:'personal-rpc-v4',historicalGrantsIncluded:false};
   }
   let queue=Promise.resolve();
-  async function execute(instructions){
+  async function execute(instructions,{intent=null,replacementSafe=true}={}){
     rpc.assertReady();auth(session);const generation=session.generation,rpcGeneration=rpc.generation,address=session.account.address,guard=()=>{rpc.assertReady();if(rpc.generation!==rpcGeneration)throw Object.assign(new Error('RPC_CHANGED'),{code:'RPC_CHANGED'});session.guard(generation,address);};guard();
     if(await connection.getGenesisHash()!==deployment.genesisHash)throw new Error('Factory chain identity changed');
-    const scope=await hash(canonical({program:deployment.programId,factory:deployment.factory,wallet:address,instructions:instructions.map(ix=>({program:ix.programId.toBase58(),keys:ix.keys.map(k=>({address:k.pubkey.toBase58(),signer:k.isSigner,writable:k.isWritable})),data:Buffer.from(ix.data).toString('hex')}))}));
+    if(intent!==null&&(typeof intent!=='string'||intent.length>160))throw new Error('Invalid wallet transaction intent');
+    const scope=await hash(canonical({program:deployment.programId,factory:deployment.factory,wallet:address,...(intent===null?{}:{intent}),instructions:instructions.map(ix=>({program:ix.programId.toBase58(),keys:ix.keys.map(k=>({address:k.pubkey.toBase58(),signer:k.isSigner,writable:k.isWritable})),data:Buffer.from(ix.data).toString('hex')}))}));
     const key=deployment.factory+':'+address+':'+scope;let record=await transportRecord(key),previous=[];guard();
     if(record?.signature){
       const status=(await connection.getSignatureStatuses([record.signature],{searchTransactionHistory:true})).value[0];guard();
       if(status?.confirmationStatus==='finalized'&&!status.err){record.finalized=true;await transportRecord(key,record);return record.signature;}
       if(record.finalized)throw new Error('Original finalized receipt is unavailable; reconcile before continuing');
-      if(status?.confirmationStatus==='finalized'&&status.err||!status&&await connection.getBlockHeight('finalized')>record.lastValidBlockHeight){previous=[...(record.previous||[]),{signature:record.signature,raw:record.raw,lastValidBlockHeight:record.lastValidBlockHeight}];if(previous.length>=3)throw new Error('Finite wallet retry allowance exhausted; saved artifacts are retained');record=null;}
+      if(status?.confirmationStatus==='finalized'&&status.err||!status&&await connection.getBlockHeight('finalized')>record.lastValidBlockHeight){if(!status&&!replacementSafe)throw new Error('Original recovery transaction is unconfirmed; reconcile chain state before retrying');previous=[...(record.previous||[]),{signature:record.signature,raw:record.raw,lastValidBlockHeight:record.lastValidBlockHeight}];if(previous.length>=3)throw new Error('Finite wallet retry allowance exhausted; saved artifacts are retained');record=null;}
     }
     if(!record){
       const latest=await connection.getLatestBlockhash('finalized'),tx=new Transaction({feePayer:new PublicKey(address),recentBlockhash:latest.blockhash}).add(...instructions);
@@ -60,7 +61,7 @@ export function factoryWalletAdapter({deployment,session,fetch:fetchImpl=globalT
     try{const signature=await connection.sendRawTransaction(Buffer.from(record.raw,'base64'),{maxRetries:0,skipPreflight:false,preflightCommitment:'finalized'});if(signature!==record.signature)throw new Error('RPC returned a different transaction signature');}catch(error){if(!['RPC_UNAVAILABLE','RPC_RATE_LIMITED'].includes(error.code)&&!String(error.message).includes('already processed')){record.lastSendUnconfirmed=true;await transportRecord(key,record);}}
     await waitForFinalizedSignature(connection,record,{guard,timeoutMs:120000});guard();record.finalized=true;await transportRecord(key,record);return record.signature;
   }
-  const send=instructions=>{const result=queue.catch(()=>{}).then(()=>execute(instructions));queue=result;return result;};
+  const send=(instructions,options)=>{const result=queue.catch(()=>{}).then(()=>execute(instructions,options));queue=result;return result;};
   const publishers=new Map();
   async function request(path,body,headers={}){
     const response=await fetchImpl(new URL('/api/task-factory/v4/'+path,api),{method:'POST',headers:{...auth(session),...headers},body,credentials:'omit',cache:'no-store',signal:AbortSignal.timeout(30000)});

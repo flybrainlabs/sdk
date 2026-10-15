@@ -5,6 +5,17 @@ import {FactoryReader,addresses,instruction,meta} from '../tools/task_factory_v4
 import {decodeTask,decodeSubmission,hex,fromHex,NONE,STATE} from './task-factory-v4-codec.mjs';
 import {canonical,hash} from './target-protocol-v2.mjs';
 import {makeRound} from './task-factory-v4-science.mjs';
+// A recovery transaction advances only frozen accounts. Idle tasks are recovered
+// on demand so a timer cannot consume the finite catalog while nobody is mining.
+export function factoryTaskRecoveryV4(f,t,now){
+  if(!Number.isSafeInteger(now)||f.state!==STATE.RUNNING||f.paused)return null;
+  if(f.activeIndex===NONE)return f.nextIndex<f.count&&now<Number(f.deadline)?{kind:'advance',index:f.nextIndex}:null;
+  if(!t||t.state!==STATE.ACTIVE||t.index!==f.activeIndex)return null;
+  const eligible=t.queue.filter(e=>e.state===STATE.VALID||e.state===STATE.COMMITTED&&now<=Number(t.revealDeadline)||e.state===STATE.REVEALED&&now<=Number(t.verifyDeadline));
+  if(eligible[0]?.state===STATE.VALID)return {kind:'finalize',index:t.index,attempt:t.attempt,submission:new PublicKey(eligible[0].submission).toBase58()};
+  if(now>Number(t.verifyDeadline))return {kind:'expire',index:t.index,attempt:t.attempt};
+  return null;
+}
 export function readerForDeployment(deployment,connection=null){
   if(deployment?.schema!=='flybrainlabs-task-factory-deployment-v4'||deployment.enabled!==true||!['localnet','devnet'].includes(deployment.cluster))throw new Error('Task factory V4 is not enabled');
   if(deployment.personalRpcRequired&&!connection)throw Object.assign(new Error('RPC_REQUIRED'),{code:'RPC_REQUIRED'});
@@ -43,7 +54,7 @@ export class FactoryMiningClientV4 {
       const address=t?this.reader.a.task(this.deployment.factory,t.index):null;
       if(address?.toBase58()!==this.observedTask){if(this.taskSubscription!==undefined)await this.reader.connection.removeAccountChangeListener(this.taskSubscription);this.taskSubscription=undefined;this.observedTask=address?.toBase58();if(address&&this.deployment.useWebSocket!==false)this.taskSubscription=this.reader.connection.onAccountChange(address,()=>this.sync().catch(e=>this.disconnected(e)),'finalized');}
       const reason=r?null:f.paused?'paused':f.state===STATE.EXHAUSTED?'catalog-exhausted':f.state===STATE.CLOSED?'campaign-closed':now>=Number(f.deadline)?'campaign-deadline':f.state===STATE.DRAFT?'catalog-not-sealed':'waiting-for-advance';
-      this.snapshot={schema:'flybrainlabs-factory-snapshot-v4',serverTime:now,round:r,factory:f,task:t,reason,state:[STATE.EXHAUSTED,STATE.CLOSED].includes(f.state)?'RESEARCH_STAGE_COMPLETE':f.paused?'PAUSED':'READY'};this.lastError=null;this.onConnection(true);this.onSnapshot(this.snapshot);return this.snapshot;
+      this.snapshot={schema:'flybrainlabs-factory-snapshot-v4',serverTime:now,round:r,factory:f,task:t,recovery:factoryTaskRecoveryV4(f,t,now),reason,state:[STATE.EXHAUSTED,STATE.CLOSED].includes(f.state)?'RESEARCH_STAGE_COMPLETE':f.paused?'PAUSED':'READY'};this.lastError=null;this.onConnection(true);this.onSnapshot(this.snapshot);return this.snapshot;
     })().catch(e=>{if(generation===this.generation)this.disconnected(e);throw e;}).finally(()=>this.syncing=null);return this.syncing;
   }
   async suspend(error){
@@ -52,8 +63,25 @@ export class FactoryMiningClientV4 {
   }
   get serverNow(){return this.lastSync?this.lastSync.serverTime+(performance.now()-this.lastSync.localAt)/1000:null;}
   disconnected(error){this.online=false;this.lastError=error?.message;this.onConnection(false,error);}
-  async advance(){const f=await this.reader.factory();if(f.activeIndex!==NONE||f.nextIndex>=f.count)return;await this.send([instruction(this.reader.program,[meta(this.deployment.factory,true),meta(this.reader.a.task(this.deployment.factory,f.nextIndex),true)],3)]);await this.sync();}
-  async expire(){const f=await this.reader.factory();if(f.activeIndex===NONE)return this.advance();const keys=[meta(this.deployment.factory,true),meta(this.reader.a.task(this.deployment.factory,f.activeIndex),true)];if(f.nextIndex<f.count)keys.push(meta(this.reader.a.task(this.deployment.factory,f.nextIndex),true));await this.send([instruction(this.reader.program,keys,8)]);await this.sync();}
+  async recoverTask(){
+    if(this.recoveryPending)return this.recoveryPending;
+    this.recoveryPending=(async()=>{
+      this.assertMiningAuthorization?.();const snapshot=await this.sync(),action=snapshot.recovery;
+      if(!action)return snapshot;
+      const f=snapshot.factory,task=this.reader.a.task(this.deployment.factory,action.index),keys=[meta(this.deployment.factory,true),meta(task,true)];
+      let tag=3;
+      if(action.kind==='advance'){
+        const next=await this.reader.task(action.index);if(snapshot.serverTime+next.descriptor.verifySeconds>Number(f.deadline))throw new Error('Insufficient campaign time for the next frozen task');
+      }else{
+        tag=action.kind==='finalize'?7:8;if(action.submission){const s=await this.reader.submission(action.submission,task);if(s.state!==STATE.VALID||s.attempt!==action.attempt||((s.validVotes&1)+((s.validVotes>>1)&1)+((s.validVotes>>2)&1))<2)throw new Error('Verified candidate quorum changed');keys.push(meta(action.submission));}
+        if(f.nextIndex<f.count)keys.push(meta(this.reader.a.task(this.deployment.factory,f.nextIndex),true));
+      }
+      await this.send([instruction(this.reader.program,keys,tag)],{intent:`task-recovery-v4:${action.kind}:${action.index}:${action.attempt??0}`,replacementSafe:false});
+      return this.sync();
+    })().finally(()=>this.recoveryPending=null);return this.recoveryPending;
+  }
+  async advance(){const snapshot=await this.sync();return snapshot.recovery?.kind==='advance'?this.recoverTask():snapshot;}
+  async expire(){return this.recoverTask();}
   // Both methods are optional telemetry. They never create or select tasks.
   async heartbeat(){} async reportWork(){}
   async dispose(){this.generation++;clearInterval(this.timer);for(const id of [this.factorySubscription,this.taskSubscription])if(id!==undefined)await this.reader.connection.removeAccountChangeListener(id);this.online=false;}

@@ -1,0 +1,35 @@
+// Contract timeout boundaries and transaction scope, using no real credentials
+// or chain writes. Scientific replay is covered by the existing V4 suite.
+import assert from 'node:assert/strict';
+import {PublicKey} from '@solana/web3.js';
+import {factoryTaskRecoveryV4,FactoryMiningClientV4} from '../web/task-factory-client-v4.mjs';
+import {addresses} from '../tools/task_factory_v4_client.mjs';
+import {STATE,NONE} from '../web/task-factory-v4-codec.mjs';
+const checks=[],program=new PublicKey(new Uint8Array(32).fill(1)),factory=new PublicKey(new Uint8Array(32).fill(2)),candidate=new PublicKey(new Uint8Array(32).fill(3)),a=addresses(program);
+let f={state:STATE.RUNNING,paused:false,activeIndex:2,nextIndex:3,count:8,deadline:1000n},t={state:STATE.ACTIVE,index:2,attempt:0,claimDeadline:10n,revealDeadline:20n,verifyDeadline:30n,queue:[]};
+const action=now=>factoryTaskRecoveryV4(f,t,now);
+assert.equal(action(10),null);assert.equal(action(30),null);assert.equal(action(30.1),null);assert.deepEqual(action(31),{kind:'expire',index:2,attempt:0});
+checks.push('No early recovery, including exact verification deadline and unavailable finalized clock');
+t.queue=[{state:STATE.COMMITTED,submission:new Uint8Array(32).fill(4)},{state:STATE.VALID,submission:candidate.toBytes()}];
+assert.equal(action(20),null);assert.equal(action(21).kind,'finalize');assert.equal(action(31).kind,'finalize');
+t.queue[0].state=STATE.REVEALED;assert.equal(action(30),null);assert.equal(action(31).kind,'finalize');
+t.queue[1].state=STATE.INVALID;assert.equal(action(31).kind,'expire');
+checks.push('Earlier commitments retain their windows; an earned quorum survives expiry and finalizes before any retry');
+for(const patch of [{paused:true},{state:STATE.DRAFT},{state:STATE.CLOSED},{state:STATE.EXHAUSTED}])assert.equal(factoryTaskRecoveryV4({...f,...patch},t,31),null);
+assert.deepEqual(factoryTaskRecoveryV4({...f,activeIndex:NONE},null,31),{kind:'advance',index:3});
+assert.equal(factoryTaskRecoveryV4({...f,activeIndex:NONE,nextIndex:8},null,31),null);assert.equal(factoryTaskRecoveryV4({...f,activeIndex:NONE},null,1000),null);
+checks.push('Paused, closed, exhausted and expired campaigns do not open tasks');
+let sent=[],now=31,sendGate,finishSend,allowed=true;
+const client=Object.assign(Object.create(FactoryMiningClientV4.prototype),{deployment:{factory:factory.toBase58()},reader:{program,a,task:async()=>({descriptor:{verifySeconds:30}}),submission:async()=>({state:STATE.VALID,attempt:t.attempt,validVotes:3})},assertMiningAuthorization:()=>{if(!allowed)throw new Error('RPC_REQUIRED');},sync:async()=>({factory:f,task:t,serverTime:now,recovery:action(now)}),send:async(ixs,options)=>{sent.push({ixs,options});if(sendGate)await sendGate;}});
+t.queue=[];sendGate=new Promise(ok=>finishSend=ok);const first=client.recoverTask(),duplicate=client.recoverTask();await new Promise(setImmediate);assert.equal(sent.length,1);finishSend();await Promise.all([first,duplicate]);sendGate=null;
+assert.equal(sent[0].ixs[0].data[5],8);assert.equal(sent[0].ixs[0].keys.length,3);assert.equal(sent[0].options.replacementSafe,false);
+const intent=sent[0].options.intent;t.attempt=1;await client.recoverTask();assert.notEqual(sent.at(-1).options.intent,intent);
+checks.push('Duplicate clicks coalesce; each frozen attempt has a separate receipt scope and unknown recovery cannot be replaced blindly');
+t.queue=[{state:STATE.VALID,submission:candidate.toBytes()}];await client.recoverTask();assert.equal(sent.at(-1).ixs[0].data[5],7);assert(sent.at(-1).ixs[0].keys[2].pubkey.equals(candidate));
+client.reader.submission=async()=>({state:STATE.VALID,attempt:t.attempt,validVotes:1});await assert.rejects(client.recoverTask(),/quorum/);
+checks.push('Finalization includes the admitted candidate and verifies its attempt and two-key quorum');
+f={...f,activeIndex:NONE};await client.recoverTask();assert.equal(sent.at(-1).ixs[0].data[5],3);
+f.deadline=50n;await assert.rejects(client.recoverTask(),/Insufficient campaign time/);
+const count=sent.length;f={...f,paused:true};await client.recoverTask();assert.equal(sent.length,count);allowed=false;await assert.rejects(client.recoverTask(),/RPC_REQUIRED/);
+checks.push('Advancing uses only the next predefined account, checks available campaign time and requires the personal RPC and wallet gate');
+console.log(JSON.stringify({passed:true,checks,fixtureOnly:true,chainWrites:0}));

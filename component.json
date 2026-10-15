@@ -47,7 +47,9 @@
     "web/factory-wallet-adapter-v4.mjs": "web/factory-wallet-adapter-v4.mjs",
     "web/factory-user-rpc-v4.mjs": "web/factory-user-rpc-v4.mjs",
     "tests/vectors/factory-user-rpc-v4.json": "tests/vectors/factory-user-rpc-v4.json",
-    "tests/personal_rpc_v4.mjs": "tests/personal_rpc_v4.mjs"
+    "tests/personal_rpc_v4.mjs": "tests/personal_rpc_v4.mjs",
+    "tests/task_factory_recovery_v4.mjs": "tests/task_factory_recovery_v4.mjs",
+    "tests/factory_wallet_recovery_v4.mjs": "tests/factory_wallet_recovery_v4.mjs"
   },
   "project": "flybrainlabs"
 }
