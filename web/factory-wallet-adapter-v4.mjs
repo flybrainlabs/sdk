@@ -13,8 +13,12 @@ async function transportRecord(key,value){
   const db=await new Promise((ok,no)=>{const r=indexedDB.open('flybrainlabs-wallet-transactions-v4',1);r.onupgradeneeded=()=>r.result.createObjectStore('transactions');r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.error);});
   try{return await new Promise((ok,no)=>{const t=db.transaction('transactions',value===undefined?'readonly':'readwrite'),r=value===undefined?t.objectStore('transactions').get(key):t.objectStore('transactions').put(value,key);let result;r.onsuccess=()=>result=r.result;r.onerror=()=>no(r.error);t.oncomplete=()=>ok(result);t.onerror=()=>no(t.error);});}finally{db.close();}
 }
+function signedIn(session){
+  const expires=Number(session.login?.expiresAt);
+  return !!session.account&&session.login?.wallet===session.account.address&&Number.isFinite(expires)&&expires>Date.now()/1000;
+}
 function auth(session){
-  if(!session.account||!session.login||session.login.wallet!==session.account.address||Number(session.login.expiresAt)<=Date.now()/1000)throw Object.assign(new Error('Sign in with the connected wallet before mining'),{code:'wallet-login-required'});
+  if(!signedIn(session))throw Object.assign(new Error('Sign in with the connected wallet before mining'),{code:'wallet-login-required'});
   return {Authorization:'Bearer '+session.login.token,'X-Mining-CSRF':session.login.csrfToken};
 }
 export function factoryWalletAdapter({deployment,session,fetch:fetchImpl=globalThis.fetch,rpc:personalRpc=null}){
@@ -77,5 +81,5 @@ export function factoryWalletAdapter({deployment,session,fetch:fetchImpl=globalT
         if(!Number.isSafeInteger(result.received)||result.received<=offset||result.received>blob.size)throw new Error('Artifact upload cursor mismatch');offset=result.received;
       }
     }});
-  return {wallet,send,connection,contentStore,rpc,readBalances,assertMiningAuthorization:()=>{rpc.assertReady();auth(session);}};
+  return {wallet,send,connection,contentStore,rpc,readBalances,isSignedIn:()=>signedIn(session),assertMiningAuthorization:()=>{rpc.assertReady();auth(session);}};
 }

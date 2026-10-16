@@ -28,5 +28,13 @@ await adapter.send([ix],intent(0));assert.equal(signatures,1);await adapter.send
 await adapter.send([ix],intent(1));assert.equal(signatures,2);assert.equal(packets.length,2);assert.equal(records.size,2);
 unknown=true;await assert.rejects(adapter.send([ix],intent(2)),e=>e.code==='CHAIN_STATUS_UNKNOWN');assert.equal(signatures,3);
 await assert.rejects(adapter.send([ix],intent(2)),/Original recovery transaction is unconfirmed/);assert.equal(signatures,3);assert.equal(packets.length,3);
+const liveLogin={...session.login};assert.equal(adapter.isSignedIn(),true);
+for(const login of [{...liveLogin,expiresAt:Date.now()/1000-1},{...liveLogin,expiresAt:'invalid'},{...liveLogin,wallet:'different-wallet'},null]){
+  session.login=login;assert.equal(adapter.isSignedIn(),false);
+  assert.throws(()=>adapter.assertMiningAuthorization(),e=>e.code==='wallet-login-required');
+  await assert.rejects(adapter.send([ix],intent(3)),e=>e.code==='wallet-login-required');
+  assert.equal(signatures,3);assert.equal(packets.length,3);assert.equal(records.size,3);
+}
+session.login=liveLogin;assert.equal(adapter.isSignedIn(),true);
 enabled=false;await assert.rejects(adapter.send([ix],intent(3)),/RPC_REQUIRED/);assert.equal(signatures,3);
-console.log(JSON.stringify({passed:true,checks:['Finalized recovery receipts deduplicate identical attempts','A second contract attempt uses a separate persisted transaction scope','Ambiguous expired recovery is retained and never signed again blindly','Missing personal RPC blocks signing'],ephemeralFixtureWallet:true,realChainWrites:0}));
+console.log(JSON.stringify({passed:true,checks:['Finalized recovery receipts deduplicate identical attempts','A second contract attempt uses a separate persisted transaction scope','Ambiguous expired recovery is retained and never signed again blindly','Expired, invalid, mismatched and missing wallet login block signing and expose the same UI authorization state','Missing personal RPC blocks signing'],ephemeralFixtureWallet:true,realChainWrites:0}));
