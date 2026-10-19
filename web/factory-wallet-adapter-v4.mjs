@@ -9,6 +9,7 @@ import {FactoryContentStoreV4} from './factory-content-store-v4.mjs';
 import {FactoryUserRpcV4} from './factory-user-rpc-v4.mjs';
 
 const base58=bytes=>{const a='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';let n=0n,s='';for(const b of bytes)n=n*256n+BigInt(b);while(n){s=a[Number(n%58n)]+s;n/=58n;}for(const b of bytes){if(b)break;s='1'+s;}return s;};
+const sessionQueues=new WeakMap();
 async function transportRecord(key,value){
   const db=await new Promise((ok,no)=>{const r=indexedDB.open('flybrainlabs-wallet-transactions-v4',1);r.onupgradeneeded=()=>r.result.createObjectStore('transactions');r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.error);});
   try{return await new Promise((ok,no)=>{const t=db.transaction('transactions',value===undefined?'readonly':'readwrite'),r=value===undefined?t.objectStore('transactions').get(key):t.objectStore('transactions').put(value,key);let result;r.onsuccess=()=>result=r.result;r.onerror=()=>no(r.error);t.oncomplete=()=>ok(result);t.onerror=()=>no(t.error);});}finally{db.close();}
@@ -39,7 +40,6 @@ export function factoryWalletAdapter({deployment,session,fetch:fetchImpl=globalT
     if(info){const token=unpackAccount(ata,info);if(!token.owner.equals(miner)||!token.mint.equals(mint))throw new Error('Token balance identity mismatch');amount=token.amount;}
     return {wallet:address,mint:deployment.mint,cluster:deployment.cluster,solLamports:String(sol),tokenAtoms:String(amount),symbol:'FBW',grants:[],pendingRewardAtoms:null,asOf:Math.floor(Date.now()/1000),commitment:'finalized',source:'personal-rpc-v4',historicalGrantsIncluded:false};
   }
-  let queue=Promise.resolve();
   async function execute(instructions,{intent=null,replacementSafe=true,beforeSend=()=>{}}={}){
     beforeSend();rpc.assertReady();auth(session);const local=session.wallet.features['flybrainlabs:miningWallet'];local?.assertAuthorized();const generation=session.generation,rpcGeneration=rpc.generation,address=session.account.address,guard=()=>{beforeSend();rpc.assertReady();if(rpc.generation!==rpcGeneration)throw Object.assign(new Error('RPC_CHANGED'),{code:'RPC_CHANGED'});session.guard(generation,address);local?.assertAuthorized();};guard();
     if(await connection.getGenesisHash()!==deployment.genesisHash)throw new Error('Factory chain identity changed');
@@ -66,10 +66,11 @@ export function factoryWalletAdapter({deployment,session,fetch:fetchImpl=globalT
     try{const signature=await connection.sendRawTransaction(Buffer.from(record.raw,'base64'),{maxRetries:0,skipPreflight:false,preflightCommitment:'finalized'});if(signature!==record.signature)throw new Error('RPC returned a different transaction signature');}catch(error){if(!['RPC_UNAVAILABLE','RPC_RATE_LIMITED'].includes(error.code)&&!String(error.message).includes('already processed')){record.lastSendUnconfirmed=true;await transportRecord(key,record);}}
     await waitForFinalizedSignature(connection,record,{guard,timeoutMs:120000});guard();record.finalized=true;await transportRecord(key,record);return record.signature;
   }
-  const send=(instructions,options)=>{const result=queue.catch(()=>{}).then(()=>execute(instructions,options));queue=result;return result;};
+  const send=(instructions,options)=>{const result=(sessionQueues.get(session)||Promise.resolve()).catch(()=>{}).then(()=>execute(instructions,options));sessionQueues.set(session,result);return result;};
   const publishers=new Map();
   async function request(path,body,headers={}){
-    const response=await fetchImpl(new URL('/api/task-factory/v4/'+path,api),{method:'POST',headers:{...auth(session),...headers},body,credentials:'omit',cache:'no-store',signal:AbortSignal.timeout(30000)});
+    const url=new URL('/api/task-factory/v4/'+path,api);if(deployment.poolFactory)url.searchParams.set('factory',deployment.poolFactory);
+    const response=await fetchImpl(url,{method:'POST',headers:{...auth(session),...headers},body,credentials:'omit',cache:'no-store',signal:AbortSignal.timeout(30000)});
     let value;try{value=await response.json();}catch{throw new Error('Artifact gateway response unavailable');}
     if(!response.ok)throw Object.assign(new Error(value.code||'Artifact publication failed'),{status:response.status,code:value.code});return value;
   }
@@ -82,5 +83,9 @@ export function factoryWalletAdapter({deployment,session,fetch:fetchImpl=globalT
         if(!Number.isSafeInteger(result.received)||result.received<=offset||result.received>blob.size)throw new Error('Artifact upload cursor mismatch');offset=result.received;
       }
     }});
-  return {wallet,send,connection,contentStore,rpc,readBalances,isSignedIn:()=>signedIn(session),assertMiningAuthorization:()=>{rpc.assertReady();auth(session);}};
+  const inputRequest=value=>request('inputs',JSON.stringify(value),{'Content-Type':'application/json'});
+  const reserveInput=deployment.taskPool?async(round,input,sessionId)=>{const value=await inputRequest({action:'claim',factory:deployment.factory,roundId:round.roundId,input,sessionId});return value.busy?false:value.lease;}:null;
+  const renewInput=deployment.taskPool?async lease=>inputRequest({action:'renew',factory:deployment.factory,...lease}):null;
+  const releaseInput=deployment.taskPool?async lease=>inputRequest({action:'release',factory:deployment.factory,...lease}):null;
+  return {wallet,send,connection,contentStore,rpc,readBalances,reserveInput,renewInput,releaseInput,isSignedIn:()=>signedIn(session),assertMiningAuthorization:()=>{rpc.assertReady();auth(session);}};
 }

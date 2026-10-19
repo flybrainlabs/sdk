@@ -55,7 +55,10 @@
     "tests/mining_wallet_v4.mjs": "tests/mining_wallet_v4.mjs",
     "web/factory-worker-reader-v4.mjs": "web/factory-worker-reader-v4.mjs",
     "tests/factory_worker_reader_v4.mjs": "tests/factory_worker_reader_v4.mjs",
-    "tests/mining_wallet_sbf_v4.mjs": "tests/mining_wallet_sbf_v4.mjs"
+    "tests/mining_wallet_sbf_v4.mjs": "tests/mining_wallet_sbf_v4.mjs",
+    "web/factory-pool-v4.mjs": "web/factory-pool-v4.mjs",
+    "web/mining-wallet-pool-policy-v4.mjs": "web/mining-wallet-pool-policy-v4.mjs",
+    "tests/factory_pool_v4.mjs": "tests/factory_pool_v4.mjs"
   },
   "project": "flybrainlabs"
 }
