@@ -19,7 +19,7 @@ const memory={record:null,async load(){return this.record;},async save(v){this.r
 const phrase=newMiningMnemonic(),password=Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString('hex');await wallet.save(phrase,password,{confirmed:true,restored:true});const address=wallet.address;
 svm.airdrop(address,50000000n);
 const connection={async getGenesisHash(){return d.genesisHash;},async getAccountInfo(key){const value=svm.getAccount(key.toBase58());return value.exists?{owner:new PublicKey(value.programAddress),data:Buffer.from(value.data),lamports:Number(value.lamports)}:null;},async getBalance(key){return Number(svm.getBalance(key.toBase58())||0n);},async getMinimumBalanceForRentExemption(size){return Number(svm.minimumBalanceForRentExemption(BigInt(size)));},async getFeeForMessage(){return {value:5000};}};
-const policy=new MiningWalletPolicyV4({deployment:d,connection,address});wallet.policy=policy;await policy.approve('20000000');
+const policy=new MiningWalletPolicyV4({deployment:d,connection,address});wallet.policy=policy;await policy.approve();
 const f=await policy.reader.factory(),t=await policy.reader.task(f.activeIndex),task=policy.reader.a.task(d.factory,t.index),miner=new PublicKey(address),salt=hash(text('isolated-wallet-sbf-salt'));
 const evidence={candidate:hash(text('isolated-candidate')),result:hash(text('isolated-result')),manifest:hash(text('isolated-manifest')),archive:hash(text('isolated-archive'))};
 const digest=commitment(policy.reader.program,f,task,t.attempt,miner,miner,evidence,salt),submission=policy.reader.a.submission(task,t.attempt,miner,digest);

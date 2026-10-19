@@ -5,8 +5,18 @@ import {FactoryReader,addresses,instruction,meta} from '../tools/task_factory_v4
 import {decodeTask,decodeSubmission,hex,fromHex,NONE,STATE} from './task-factory-v4-codec.mjs';
 import {canonical,hash} from './target-protocol-v2.mjs';
 import {makeRound} from './task-factory-v4-science.mjs';
-// A recovery transaction advances only frozen accounts. Idle tasks are recovered
-// on demand so a timer cannot consume the finite catalog while nobody is mining.
+// Recovery advances frozen accounts on explicit Start/Resume or while that
+// mining session remains active. Idle pages never consume catalog tasks.
+export class FactoryMiningContinuationV4 {
+  constructor({client,runner,canPay,hasPendingOutputs=()=>false,onError=()=>{}}){Object.assign(this,{client,runner,canPay,hasPendingOutputs,onError});this.pending=null;}
+  eligible(){const r=this.runner;return r.running&&r.intent&&!r.paused&&!r.stopAfterRound&&this.client.online&&this.canPay()&&!this.hasPendingOutputs();}
+  tick(){
+    if(this.pending)return this.pending;if(!this.eligible()||!this.client.snapshot?.recovery)return Promise.resolve(false);
+    const generation=this.runner.generation,identity=this.client.identity?.publicKey;
+    const beforeSend=()=>{if(!this.eligible()||generation!==this.runner.generation||identity!==this.client.identity?.publicKey)throw Object.assign(new Error('MINING_SESSION_STOPPED'),{code:'MINING_SESSION_STOPPED'});};
+    this.pending=this.client.recoverTask({beforeSend}).then(()=>true).catch(error=>{if(error.code==='MINING_SESSION_STOPPED')return false;this.runner.pauseNow(error.code||'contract-continuation-error');this.onError(error);return false;}).finally(()=>this.pending=null);return this.pending;
+  }
+}
 export function factoryTaskRecoveryV4(f,t,now){
   if(!Number.isSafeInteger(now)||f.state!==STATE.RUNNING||f.paused)return null;
   if(f.activeIndex===NONE)return f.nextIndex<f.count&&now<Number(f.deadline)?{kind:'advance',index:f.nextIndex}:null;
@@ -63,10 +73,10 @@ export class FactoryMiningClientV4 {
   }
   get serverNow(){return this.lastSync?this.lastSync.serverTime+(performance.now()-this.lastSync.localAt)/1000:null;}
   disconnected(error){this.online=false;this.lastError=error?.message;this.onConnection(false,error);}
-  async recoverTask(){
+  async recoverTask({beforeSend=()=>{}}={}){
     if(this.recoveryPending)return this.recoveryPending;
     this.recoveryPending=(async()=>{
-      this.assertMiningAuthorization?.();const snapshot=await this.sync(),action=snapshot.recovery;
+      beforeSend();this.assertMiningAuthorization?.();const snapshot=await this.sync(),action=snapshot.recovery;
       if(!action)return snapshot;
       const f=snapshot.factory,task=this.reader.a.task(this.deployment.factory,action.index),keys=[meta(this.deployment.factory,true),meta(task,true)];
       let tag=3;
@@ -76,7 +86,7 @@ export class FactoryMiningClientV4 {
         tag=action.kind==='finalize'?7:8;if(action.submission){const s=await this.reader.submission(action.submission,task);if(s.state!==STATE.VALID||s.attempt!==action.attempt||((s.validVotes&1)+((s.validVotes>>1)&1)+((s.validVotes>>2)&1))<2)throw new Error('Verified candidate quorum changed');keys.push(meta(action.submission));}
         if(f.nextIndex<f.count)keys.push(meta(this.reader.a.task(this.deployment.factory,f.nextIndex),true));
       }
-      await this.send([instruction(this.reader.program,keys,tag)],{intent:`task-recovery-v4:${action.kind}:${action.index}:${action.attempt??0}`,replacementSafe:false});
+      beforeSend();await this.send([instruction(this.reader.program,keys,tag)],{intent:`task-recovery-v4:${action.kind}:${action.index}:${action.attempt??0}`,replacementSafe:false,beforeSend});
       return this.sync();
     })().finally(()=>this.recoveryPending=null);return this.recoveryPending;
   }

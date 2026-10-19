@@ -2,7 +2,7 @@
 // or chain writes. Scientific replay is covered by the existing V4 suite.
 import assert from 'node:assert/strict';
 import {PublicKey} from '@solana/web3.js';
-import {factoryTaskRecoveryV4,FactoryMiningClientV4} from '../web/task-factory-client-v4.mjs';
+import {factoryTaskRecoveryV4,FactoryMiningClientV4,FactoryMiningContinuationV4} from '../web/task-factory-client-v4.mjs';
 import {addresses} from '../tools/task_factory_v4_client.mjs';
 import {STATE,NONE} from '../web/task-factory-v4-codec.mjs';
 const checks=[],program=new PublicKey(new Uint8Array(32).fill(1)),factory=new PublicKey(new Uint8Array(32).fill(2)),candidate=new PublicKey(new Uint8Array(32).fill(3)),a=addresses(program);
@@ -32,4 +32,17 @@ f={...f,activeIndex:NONE};await client.recoverTask();assert.equal(sent.at(-1).ix
 f.deadline=50n;await assert.rejects(client.recoverTask(),/Insufficient campaign time/);
 const count=sent.length;f={...f,paused:true};await client.recoverTask();assert.equal(sent.length,count);allowed=false;await assert.rejects(client.recoverTask(),/RPC_REQUIRED/);
 checks.push('Advancing uses only the next predefined account, checks available campaign time and requires the personal RPC and wallet gate');
+const runner={running:false,intent:false,paused:false,stopAfterRound:false,generation:1,pauseNow(code){this.paused=true;this.reason=code;}};
+let automaticSends=0,canPay=true,pendingOutputs=false,finishRecovery,automaticGate;
+const automaticClient={online:true,identity:{publicKey:'bound-miner'},snapshot:{recovery:{kind:'expire'}},async recoverTask({beforeSend}){if(automaticGate)await automaticGate;beforeSend();automaticSends++;}};
+const continuation=new FactoryMiningContinuationV4({client:automaticClient,runner,canPay:()=>canPay,hasPendingOutputs:()=>pendingOutputs});
+await continuation.tick();assert.equal(automaticSends,0);runner.running=runner.intent=true;
+await continuation.tick();assert.equal(automaticSends,1);
+for(const patch of [{paused:true},{stopAfterRound:true},{intent:false}]){Object.assign(runner,patch);await continuation.tick();assert.equal(automaticSends,1);Object.assign(runner,{paused:false,stopAfterRound:false,intent:true});}
+canPay=false;await continuation.tick();canPay=true;pendingOutputs=true;await continuation.tick();pendingOutputs=false;assert.equal(automaticSends,1);
+checks.push('Continuous recovery runs only during an explicit active mining session, with funds and no unsaved outputs; idle, paused and single-round modes do not send');
+automaticGate=new Promise(ok=>finishRecovery=ok);const autoFirst=continuation.tick(),autoDuplicate=continuation.tick();assert.equal(autoFirst,autoDuplicate);runner.paused=true;finishRecovery();assert.equal(await autoFirst,false);assert.equal(automaticSends,1);
+runner.paused=false;automaticGate=null;await continuation.tick();assert.equal(automaticSends,2);
+automaticClient.recoverTask=async()=>{throw Object.assign(new Error('Unknown original chain receipt'),{code:'CHAIN_STATUS_UNKNOWN'});};await continuation.tick();assert(runner.paused);assert.equal(runner.reason,'CHAIN_STATUS_UNKNOWN');
+checks.push('Concurrent recovery checks coalesce, Pause cancels a queued send, Resume continues, and unknown receipts pause without a replacement');
 console.log(JSON.stringify({passed:true,checks,fixtureOnly:true,chainWrites:0}));

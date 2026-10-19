@@ -40,8 +40,8 @@ export function factoryWalletAdapter({deployment,session,fetch:fetchImpl=globalT
     return {wallet:address,mint:deployment.mint,cluster:deployment.cluster,solLamports:String(sol),tokenAtoms:String(amount),symbol:'FBW',grants:[],pendingRewardAtoms:null,asOf:Math.floor(Date.now()/1000),commitment:'finalized',source:'personal-rpc-v4',historicalGrantsIncluded:false};
   }
   let queue=Promise.resolve();
-  async function execute(instructions,{intent=null,replacementSafe=true}={}){
-    rpc.assertReady();auth(session);const local=session.wallet.features['flybrainlabs:miningWallet'];local?.assertAuthorized();const generation=session.generation,rpcGeneration=rpc.generation,address=session.account.address,guard=()=>{rpc.assertReady();if(rpc.generation!==rpcGeneration)throw Object.assign(new Error('RPC_CHANGED'),{code:'RPC_CHANGED'});session.guard(generation,address);local?.assertAuthorized();};guard();
+  async function execute(instructions,{intent=null,replacementSafe=true,beforeSend=()=>{}}={}){
+    beforeSend();rpc.assertReady();auth(session);const local=session.wallet.features['flybrainlabs:miningWallet'];local?.assertAuthorized();const generation=session.generation,rpcGeneration=rpc.generation,address=session.account.address,guard=()=>{beforeSend();rpc.assertReady();if(rpc.generation!==rpcGeneration)throw Object.assign(new Error('RPC_CHANGED'),{code:'RPC_CHANGED'});session.guard(generation,address);local?.assertAuthorized();};guard();
     if(await connection.getGenesisHash()!==deployment.genesisHash)throw new Error('Factory chain identity changed');
     if(intent!==null&&(typeof intent!=='string'||intent.length>160))throw new Error('Invalid wallet transaction intent');
     const scope=await hash(canonical({program:deployment.programId,factory:deployment.factory,wallet:address,...(intent===null?{}:{intent}),instructions:instructions.map(ix=>({program:ix.programId.toBase58(),keys:ix.keys.map(k=>({address:k.pubkey.toBase58(),signer:k.isSigner,writable:k.isWritable})),data:Buffer.from(ix.data).toString('hex')}))}));

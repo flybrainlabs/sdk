@@ -1,5 +1,5 @@
-// Local, finite spending authorization for this frozen factory only.
-import {PublicKey,Transaction,SystemProgram} from '@solana/web3.js';
+// Local automatic payments for this frozen factory; no spending budget.
+import {PublicKey,Transaction} from '@solana/web3.js';
 import {Buffer} from 'buffer';
 import {getAssociatedTokenAddressSync,createAssociatedTokenAccountIdempotentInstruction,ASSOCIATED_TOKEN_PROGRAM_ID,TOKEN_PROGRAM_ID} from '@solana/spl-token';
 import {readerForDeployment} from './task-factory-client-v4.mjs';
@@ -8,22 +8,21 @@ import {instruction,meta,system} from '../tools/task_factory_v4_client.mjs';
 const fail=code=>Object.assign(new Error(code),{code});
 const equal=(a,b)=>new PublicKey(a).equals(new PublicKey(b));
 export class MiningWalletPolicyV4 extends EventTarget {
-  constructor({deployment,connection,address,clock=()=>Date.now()}){super();Object.assign(this,{deployment,connection,address,clock});this.reader=readerForDeployment(deployment,connection);this.authorization=null;this.balance=null;this.blocked=null;}
+  constructor({deployment,connection,address}){super();Object.assign(this,{deployment,connection,address});this.reader=readerForDeployment(deployment,connection);this.authorization=null;this.balance=null;this.blocked=null;}
   changed(){this.dispatchEvent(new Event('change'));}
-  get approved(){return !!this.authorization&&this.authorization.expiresAt>this.clock()&&!this.blocked;}
-  toJSON(){const a=this.authorization;return {approved:this.approved,capLamports:a?String(a.cap):null,reservedLamports:a?String(a.used):null,balanceLamports:this.balance===null?null:String(this.balance),expiresAt:a?.expiresAt||null,blocked:this.blocked};}
+  get approved(){return !!this.authorization&&!this.blocked;}
+  toJSON(){return {approved:this.approved,balanceLamports:this.balance===null?null:String(this.balance),blocked:this.blocked};}
   assertAuthorized(){if(this.blocked)throw fail(this.blocked);if(!this.approved)throw fail('MINING_WALLET_APPROVAL');}
-  assertCanMine(){this.assertAuthorized();const required=BigInt(this.minimumLamports||0);if(this.authorization.cap-this.authorization.used<required)throw fail('MINING_WALLET_CAP');if(this.balance!==null&&this.balance<required)throw fail('MINING_WALLET_BALANCE');}
+  assertCanMine(){this.assertAuthorized();const required=BigInt(this.minimumLamports||0);if(this.balance!==null&&this.balance<required)throw fail('MINING_WALLET_BALANCE');}
   revoke(){this.authorization=null;this.blocked=null;this.changed();}
   async quote(){
     const [balance,rent]=await Promise.all([this.connection.getBalance(new PublicKey(this.address),'finalized'),this.connection.getMinimumBalanceForRentExemption(768,'finalized')]);
     if(!Number.isSafeInteger(balance)||!Number.isSafeInteger(rent)||rent<0)throw fail('MINING_WALLET_RPC');this.balance=BigInt(balance);this.minimumLamports=String(BigInt(rent)+40000n);if(this.blocked==='MINING_WALLET_BALANCE'&&this.balance>=BigInt(this.minimumLamports))this.blocked=null;this.changed();
     return {balanceLamports:String(balance),submissionRentLamports:String(rent),networkFeeCeilingLamports:'20000',minimumLamports:String(BigInt(rent)+80000n)};
   }
-  async approve(value){
-    if(!/^[0-9]{1,20}$/.test(String(value)))throw fail('MINING_WALLET_CAP');const cap=BigInt(value),quote=await this.quote();
-    await this.reader.factory();if(cap<BigInt(quote.minimumLamports))throw fail('MINING_WALLET_CAP');if(cap>this.balance)throw fail('MINING_WALLET_BALANCE');
-    this.authorization={cap,used:0n,expiresAt:this.clock()+4*60*60*1000,reservations:new Map()};this.blocked=null;this.changed();return this.toJSON();
+  async approve(){
+    const quote=await this.quote();await this.reader.factory();if(this.balance<BigInt(quote.minimumLamports))throw fail('MINING_WALLET_BALANCE');
+    this.authorization={reservations:new Map()};this.blocked=null;this.changed();return this.toJSON();
   }
   async check(tx){
     this.assertAuthorized();const approval=this.authorization,address=new PublicKey(this.address),factory=this.reader.expected.factoryAddress;
@@ -80,7 +79,6 @@ export class MiningWalletPolicyV4 extends EventTarget {
     this.assertAuthorized();if(!tx.signature||!tx.verifySignatures())throw fail('MINING_WALLET_TRANSACTION');const approval=this.authorization,key=hex(tx.signature);
     if(approval.reservations.has(key))return;
     const cost=await this.check(tx);if(approval!==this.authorization)throw fail('MINING_WALLET_APPROVAL');if(approval.reservations.has(key))return;
-    if(approval.used+cost>approval.cap){this.blocked='MINING_WALLET_CAP';this.changed();throw fail(this.blocked);}
-    approval.reservations.set(key,cost);approval.used+=cost;this.balance-=cost;this.changed();
+    approval.reservations.set(key,cost);this.balance-=cost;this.changed();
   }
 }
