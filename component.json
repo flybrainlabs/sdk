@@ -49,7 +49,13 @@
     "tests/vectors/factory-user-rpc-v4.json": "tests/vectors/factory-user-rpc-v4.json",
     "tests/personal_rpc_v4.mjs": "tests/personal_rpc_v4.mjs",
     "tests/task_factory_recovery_v4.mjs": "tests/task_factory_recovery_v4.mjs",
-    "tests/factory_wallet_recovery_v4.mjs": "tests/factory_wallet_recovery_v4.mjs"
+    "tests/factory_wallet_recovery_v4.mjs": "tests/factory_wallet_recovery_v4.mjs",
+    "web/mining-wallet-v4.mjs": "web/mining-wallet-v4.mjs",
+    "web/mining-wallet-policy-v4.mjs": "web/mining-wallet-policy-v4.mjs",
+    "tests/mining_wallet_v4.mjs": "tests/mining_wallet_v4.mjs",
+    "web/factory-worker-reader-v4.mjs": "web/factory-worker-reader-v4.mjs",
+    "tests/factory_worker_reader_v4.mjs": "tests/factory_worker_reader_v4.mjs",
+    "tests/mining_wallet_sbf_v4.mjs": "tests/mining_wallet_sbf_v4.mjs"
   },
   "project": "flybrainlabs"
 }

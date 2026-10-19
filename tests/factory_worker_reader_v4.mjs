@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {PublicKey} from '@solana/web3.js';
+import {addresses} from '../tools/task_factory_v4_client.mjs';
+import {createFactoryWorkerPortV4} from '../web/factory-worker-port-v4.mjs';
+import {factoryWorkerReaderV4} from '../web/factory-worker-reader-v4.mjs';
+const fixture=JSON.parse(await readFile('tests/vectors/factory-user-rpc-v4.json','utf8')),deployment={...fixture.deployment,personalRpcRequired:true};let reads=0;
+const bridge={expected:{factoryAddress:new PublicKey(deployment.factory)},a:addresses(deployment.programId),connection:{async getGenesisHash(){return deployment.genesisHash;},async getAccountInfo(address){reads++;const value=fixture.accounts[address.toBase58()];return value?{owner:new PublicKey(value.owner),data:Buffer.from(value.data[0],'base64')}:null;}}};
+assert.throws(()=>factoryWorkerReaderV4(deployment,null),e=>e.code==='RPC_REQUIRED');
+const capability=createFactoryWorkerPortV4(bridge,2),reader=factoryWorkerReaderV4(deployment,capability.port),factory=await reader.factory(),task=await reader.task(2);assert.equal(factory.activeIndex,2);assert.equal(task.index,2);assert.equal(reads,2);reader.dispose();capability.close();
+const denied=createFactoryWorkerPortV4(bridge,2);
+const call=payload=>new Promise(resolve=>{denied.port.onmessage=({data})=>resolve(data);denied.port.postMessage(payload);});
+assert((await call({id:1,method:'sendTransaction',raw:'forbidden'})).error);
+assert((await call({id:2,method:'getAccountInfo',address:PublicKey.default.toBase58()})).error);assert.equal(reads,2);denied.close();
+console.log(JSON.stringify({passed:true,checks:['A personal-RPC deployment rejects an absent Worker read capability','A transferred read capability verifies the frozen factory and task without a URL or credential','The Worker capability refuses transactions and unrelated account reads'],providerCredentialsInWorker:false,chainWrites:0}));

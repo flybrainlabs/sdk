@@ -41,7 +41,7 @@ export function factoryWalletAdapter({deployment,session,fetch:fetchImpl=globalT
   }
   let queue=Promise.resolve();
   async function execute(instructions,{intent=null,replacementSafe=true}={}){
-    rpc.assertReady();auth(session);const generation=session.generation,rpcGeneration=rpc.generation,address=session.account.address,guard=()=>{rpc.assertReady();if(rpc.generation!==rpcGeneration)throw Object.assign(new Error('RPC_CHANGED'),{code:'RPC_CHANGED'});session.guard(generation,address);};guard();
+    rpc.assertReady();auth(session);const local=session.wallet.features['flybrainlabs:miningWallet'];local?.assertAuthorized();const generation=session.generation,rpcGeneration=rpc.generation,address=session.account.address,guard=()=>{rpc.assertReady();if(rpc.generation!==rpcGeneration)throw Object.assign(new Error('RPC_CHANGED'),{code:'RPC_CHANGED'});session.guard(generation,address);local?.assertAuthorized();};guard();
     if(await connection.getGenesisHash()!==deployment.genesisHash)throw new Error('Factory chain identity changed');
     if(intent!==null&&(typeof intent!=='string'||intent.length>160))throw new Error('Invalid wallet transaction intent');
     const scope=await hash(canonical({program:deployment.programId,factory:deployment.factory,wallet:address,...(intent===null?{}:{intent}),instructions:instructions.map(ix=>({program:ix.programId.toBase58(),keys:ix.keys.map(k=>({address:k.pubkey.toBase58(),signer:k.isSigner,writable:k.isWritable})),data:Buffer.from(ix.data).toString('hex')}))}));
@@ -62,6 +62,7 @@ export function factoryWalletAdapter({deployment,session,fetch:fetchImpl=globalT
       record={schema:'flybrainlabs-wallet-transport-v4',scope,signature:base58(actual.signature),raw:raw.toString('base64'),lastValidBlockHeight:latest.lastValidBlockHeight,feeLamports:fee,previous,finalized:false};
       await transportRecord(key,record);guard();
     }
+    await local?.reserveTransaction(Buffer.from(record.raw,'base64'));guard();
     try{const signature=await connection.sendRawTransaction(Buffer.from(record.raw,'base64'),{maxRetries:0,skipPreflight:false,preflightCommitment:'finalized'});if(signature!==record.signature)throw new Error('RPC returned a different transaction signature');}catch(error){if(!['RPC_UNAVAILABLE','RPC_RATE_LIMITED'].includes(error.code)&&!String(error.message).includes('already processed')){record.lastSendUnconfirmed=true;await transportRecord(key,record);}}
     await waitForFinalizedSignature(connection,record,{guard,timeoutMs:120000});guard();record.finalized=true;await transportRecord(key,record);return record.signature;
   }
