@@ -102,3 +102,13 @@ attestations and advances tasks without a privileged relayer or minimum successf
 task interval. Existing V3 records and grants are retained. Public activation is
 pending an approved calibrated catalog and finite funding. See
 [the lifecycle specification](https://github.com/flybrainlabs/docs/blob/feat/contract-task-factory-v4-20261015/docs/CONTRACT_TASK_FACTORY_V4.md).
+
+## Scientific round V5 client
+
+`web/scientific-client-v5.mjs` and `web/scientific-round-v5.mjs` provide the new
+wire codec, chain reader, input commitment, challenge-derived trial identities
+and transaction builders. `ScientificWalletPolicyV5` is a separate explicit
+scoped approval for the dedicated mnemonic wallet. It preserves ordinary V4
+transactions through the approved base policy and rejects generic transfers.
+Scientific upload signatures bind the chain, program, round, claim, root and byte
+count. Computation identity excludes wallet and goal name; claims keep both.

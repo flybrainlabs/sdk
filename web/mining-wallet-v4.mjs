@@ -78,7 +78,8 @@ export class MiningWalletV4 extends EventTarget {
       'standard:connect':{version:'1.0.0',connect:async()=>{guard();return {accounts:[account]};}},
       'standard:events':{version:'1.0.0',on:()=>()=>{}},
       'solana:signMessage':{version:'1.0.0',signMessage:async({account:requested,message})=>{
-        guard();if(requested.address!==account.address)throw fail('MINING_WALLET_CHANGED');this.checkChallenge(message);
+        guard();if(requested.address!==account.address)throw fail('MINING_WALLET_CHANGED');
+        if(new TextDecoder().decode(message).startsWith('{')){if(!this.policy?.checkUploadMessage)throw fail('MINING_WALLET_CHALLENGE');await this.policy.checkUploadMessage(message);guard();}else this.checkChallenge(message);
         return [{signedMessage:message,signature:ed25519.sign(message,this.#keypair.secretKey.subarray(0,32))}];
       }},
       'solana:signTransaction':{version:'1.0.0',signTransaction:async({account:requested,chain,transaction})=>{

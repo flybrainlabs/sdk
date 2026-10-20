@@ -2,7 +2,7 @@ import {PublicKey} from '@solana/web3.js';
 import {Buffer} from 'buffer';
 import {readerForDeployment} from './task-factory-client-v4.mjs';
 import {verifyPoolManifestV4,poolDeploymentV4,verifyPoolCatalogV4} from './factory-pool-v4.mjs';
-function capability(port){
+export function capability(port){
   if(!port||typeof port.postMessage!=='function')throw Object.assign(new Error('RPC_REQUIRED'),{code:'RPC_REQUIRED'});
   let sequence=0,closed=false;const requests=new Map();
   const close=()=>{closed=true;for(const {reject,timer}of requests.values()){clearTimeout(timer);reject(new Error('Factory read capability closed'));}requests.clear();port.close();};
