@@ -10,9 +10,9 @@ const equal=(a,b)=>new PublicKey(a).equals(new PublicKey(b));
 export class MiningWalletPolicyV4 extends EventTarget {
   constructor({deployment,connection,address}){super();Object.assign(this,{deployment,connection,address});this.reader=readerForDeployment(deployment,connection);this.authorization=null;this.balance=null;this.blocked=null;}
   changed(){this.dispatchEvent(new Event('change'));}
-  get approved(){return !!this.authorization&&!this.blocked;}
+  get approved(){return !!this.authorization&&(!this.blocked||this.blocked==='MINING_WALLET_BALANCE');}
   toJSON(){return {approved:this.approved,balanceLamports:this.balance===null?null:String(this.balance),blocked:this.blocked};}
-  assertAuthorized(){if(this.blocked)throw fail(this.blocked);if(!this.approved)throw fail('MINING_WALLET_APPROVAL');}
+  assertAuthorized(){if(this.blocked&&this.blocked!=='MINING_WALLET_BALANCE')throw fail(this.blocked);if(!this.approved)throw fail('MINING_WALLET_APPROVAL');}
   assertCanMine(){this.assertAuthorized();const required=BigInt(this.minimumLamports||0);if(this.balance!==null&&this.balance<required)throw fail('MINING_WALLET_BALANCE');}
   revoke(){this.authorization=null;this.blocked=null;this.changed();}
   async quote(){

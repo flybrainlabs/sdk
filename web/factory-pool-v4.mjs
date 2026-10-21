@@ -9,6 +9,16 @@ const fail=code=>Object.assign(new Error(code),{code});
 const equal=(a,b)=>new PublicKey(a).equals(new PublicKey(b));
 const identity=['poolId','authority','genesisHash','programId','mint','policyHash','envelopeHash','anchorFactory'];
 export const poolManifestMessageV4=body=>new Uint8Array([...new TextEncoder().encode('Flybrain/factory-pool/v4\0'),...canonical(body)]);
+export const poolHistoryMessageV4=body=>new Uint8Array([...new TextEncoder().encode('Flybrain/factory-pool-history/v4\0'),...canonical(body)]);
+export async function verifyPoolHistoryV4(document,trust,{factory,now=Math.floor(Date.now()/1000)}={}){
+  if(trust?.schema!=='flybrainlabs-factory-pool-trust-v4'||await hash(canonical(trust.envelope))!==trust.envelopeHash)throw fail('POOL_TRUST_REQUIRED');
+  const {signature,...body}=document||{};
+  if(body.schema!=='flybrainlabs-factory-pool-history-v4'||identity.some(k=>body[k]!==trust[k])||Object.keys(body).sort().join(',')!==[...identity,'schema','issuedAt','expiresAt','catalog'].sort().join(',')||!Number.isSafeInteger(body.issuedAt)||!Number.isSafeInteger(body.expiresAt)||body.issuedAt>now+30||body.expiresAt<=now||body.expiresAt-body.issuedAt>86400||body.expiresAt<=body.issuedAt||typeof signature!=='string'||!/^[a-f0-9]{128}$/.test(signature))throw fail('POOL_HISTORY_SCOPE');
+  if(!ed25519.verify(Uint8Array.from(signature.match(/../g),x=>parseInt(x,16)),poolHistoryMessageV4(body),new PublicKey(trust.authority).toBytes()))throw fail('POOL_HISTORY_SIGNATURE');
+  const c=body.catalog;
+  if(!c||c.factory!==factory||Object.keys(c).sort().join(',')!=='budgetAtoms,catalogRoot,deadline,factory,factoryId,taskCount'||!Number.isInteger(c.taskCount)||c.taskCount<1||c.taskCount>4096||!/^[1-9][0-9]{0,19}$/.test(c.budgetAtoms)||BigInt(c.budgetAtoms)>0xffffffffffffffffn||!/^\d{1,19}$/.test(c.deadline))throw fail('POOL_HISTORY_CATALOG');
+  new PublicKey(c.factory);fromHex(c.factoryId);fromHex(c.catalogRoot);return {body,catalog:c,hash:await hash(canonical(document))};
+}
 export async function verifyPoolManifestV4(document,trust,{now=Math.floor(Date.now()/1000),previous=null,history=false}={}){
   if(trust?.schema!=='flybrainlabs-factory-pool-trust-v4'||await hash(canonical(trust.envelope))!==trust.envelopeHash)throw fail('POOL_TRUST_REQUIRED');
   const {signature,...body}=document||{};
@@ -38,8 +48,8 @@ export function verifyPoolGoalV4(goal,trust){
   for(const k of ['graphRoot','modelRoot','parameterProfileHash','inputDomainHash','evaluatorVersion','steps','timeStepUs'])if(goal[k]!==e[k])throw fail('POOL_SCIENCE_ENVELOPE');
   if(!Number.isSafeInteger(e.maxCandidateBytes)||goal.maxCandidateBytes>e.maxCandidateBytes||goal.maxStimulusCost>e.maxStimulusCost)throw fail('POOL_SCIENCE_ENVELOPE');
 }
-export function selectPoolContextV4(contexts,current,{minimumSeconds=1,exhaustedRounds=new Set()}={}){
-  const available=c=>c.client.online&&c.client.round&&!exhaustedRounds.has(c.client.round.roundId)&&c.client.serverNow+minimumSeconds<c.client.round.pre.claimDeadline;
+export function selectPoolContextV4(contexts,current,{minimumSeconds=1,exhaustedRounds=new Set(),pendingRounds=new Set()}={}){
+  const available=c=>!c.historyOnly&&c.client.online&&c.client.round&&Number.isFinite(c.client.serverNow)&&!exhaustedRounds.has(c.client.round.roundId)&&!pendingRounds.has(c.client.round.roundId)&&c.client.serverNow+minimumSeconds<c.client.round.pre.claimDeadline;
   if(current&&available(current))return current;
   return [...contexts].filter(available).sort((a,b)=>a.client.round.pre.claimDeadline-b.client.round.pre.claimDeadline||a.deployment.factory.localeCompare(b.deployment.factory))[0]||null;
 }
@@ -47,15 +57,15 @@ export function selectPoolContextV4(contexts,current,{minimumSeconds=1,exhausted
 // The caller commits reader, signer policy, store, submission handler and Worker
 // capability together. All preparation happens before this synchronous commit.
 export class FactoryPoolSwitchV4 {
-  constructor({runner,prepare,commit,canSwitch=()=>true}){Object.assign(this,{runner,prepare,commit,canSwitch});this.pending=null;}
+  constructor({runner,prepare,commit,canSwitch=()=>true,contextSafe=false}){Object.assign(this,{runner,prepare,commit,canSwitch,contextSafe});this.pending=null;}
   switchTo(context){
     if(this.pending)return this.pending;
     const generation=this.runner.generation;
     this.pending=(async()=>{
-      if(this.runner.active.length||!this.canSwitch())return false;
+      if(!this.contextSafe&&this.runner.active.length||!this.canSwitch())return false;
       await this.prepare(context);
-      if(this.runner.active.length||generation!==this.runner.generation||!this.canSwitch())return false;
-      this.commit(context);return true;
+      if(!this.contextSafe&&this.runner.active.length||generation!==this.runner.generation||!this.canSwitch())return false;
+      await this.commit(context);return true;
     })().finally(()=>this.pending=null);return this.pending;
   }
 }

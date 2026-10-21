@@ -55,6 +55,9 @@ await policy.approve();balance=1;await assert.rejects(sign(transaction(expire)),
 check('Low SOL and excessive network fees block signing before broadcast');
 await policy.approve();chain='wrong-network';await assert.rejects(sign(transaction(expire)),/Wrong chain genesis/);chain=deployment.genesisHash;
 check('The local signer rejects a mismatched RPC chain');
+// New-candidate admission and fee-only finishing have separate balances.
+balance=30000;await policy.quote();policy.blocked='MINING_WALLET_BALANCE';assert(policy.approved);policy.assertAuthorized();assert.throws(()=>policy.assertCanMine(),e=>e.code==='MINING_WALLET_BALANCE');await sign(transaction(expire));balance=50000000;await policy.quote();
+check('An approved low-balance session can finish a canonical fee-only operation while new candidate admission remains blocked');
 wallet.lock();assert(!wallet.unlocked&&!policy.approved);await assert.rejects(sign(transaction(expire)),e=>e.code==='MINING_WALLET_LOCKED');await wallet.unlock(password);await assert.rejects(sign(transaction(expire)),e=>e.code==='MINING_WALLET_CHANGED');
 check('Locking revokes automatic payments, and stale providers remain unusable after unlocking');
 console.log(JSON.stringify({passed:true,checks,realNetworkRequests:0,chainWrites:0,secretMaterialLogged:false}));

@@ -112,3 +112,18 @@ scoped approval for the dedicated mnemonic wallet. It preserves ordinary V4
 transactions through the approved base policy and rejects generic transfers.
 Scientific upload signatures bind the chain, program, round, claim, root and byte
 count. Computation identity excludes wallet and goal name; claims keep both.
+
+## Continuous V4 mining candidate
+
+Pool-scoped wallet coordination, fee-only recovery and separately signed catalog history. The feature branch is `feat/continuous-mining-20261021`.
+
+Run from the assembled workspace with the existing pinned dependencies:
+
+```sh
+node tests/mining_wallet_v4.mjs
+node tests/factory_pool_history_v4.mjs
+```
+
+See `docs/CONTINUOUS_MINING_V4_20261021.md` and the infrastructure
+`docs/CONTINUOUS_MINING_V4_20261021_ACCEPTANCE.json` for evidence boundaries.
+Source publication does not establish live acceptance or activate the service.

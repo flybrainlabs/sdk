@@ -66,7 +66,15 @@ export function factoryWalletAdapter({deployment,session,fetch:fetchImpl=globalT
     try{const signature=await connection.sendRawTransaction(Buffer.from(record.raw,'base64'),{maxRetries:0,skipPreflight:false,preflightCommitment:'finalized'});if(signature!==record.signature)throw new Error('RPC returned a different transaction signature');}catch(error){if(!['RPC_UNAVAILABLE','RPC_RATE_LIMITED'].includes(error.code)&&!String(error.message).includes('already processed')){record.lastSendUnconfirmed=true;await transportRecord(key,record);}}
     await waitForFinalizedSignature(connection,record,{guard,timeoutMs:120000});guard();record.finalized=true;await transportRecord(key,record);return record.signature;
   }
-  const send=(instructions,options)=>{const result=(sessionQueues.get(session)||Promise.resolve()).catch(()=>{}).then(()=>execute(instructions,options));sessionQueues.set(session,result);return result;};
+  const send=(instructions,options={})=>{
+    const address=session.account?.address,generation=session.generation,rpcGeneration=rpc.generation;
+    const beforeSend=()=>{options.beforeSend?.();session.guard(generation,address);if(rpc.generation!==rpcGeneration)throw Object.assign(new Error('RPC_CHANGED'),{code:'RPC_CHANGED'});};
+    const action=()=>{beforeSend();return execute(instructions,{...options,beforeSend});};
+    const locked=()=>{const locks=globalThis.navigator?.locks;if(locks)return locks.request('flybrain-wallet-v4:'+deployment.genesisHash+':'+deployment.programId+':'+address,action);if(typeof window!=='undefined')throw new Error('Cross-tab wallet coordination unavailable');return action();};
+    let lane=sessionQueues.get(session);if(!lane){lane={active:false,pending:[],sequence:0};sessionQueues.set(session,lane);}
+    const pump=async()=>{if(lane.active)return;lane.active=true;try{while(lane.pending.length){lane.pending.sort((a,b)=>b.priority-a.priority||a.sequence-b.sequence);const next=lane.pending.shift();try{next.resolve(await next.action());}catch(error){next.reject(error);}}}finally{lane.active=false;}};
+    return new Promise((resolve,reject)=>{lane.pending.push({action:locked,priority:Number.isFinite(options.priority)?options.priority:0,sequence:lane.sequence++,resolve,reject});queueMicrotask(pump);});
+  };
   const publishers=new Map();
   async function request(path,body,headers={}){
     const url=new URL('/api/task-factory/v4/'+path,api);if(deployment.poolFactory)url.searchParams.set('factory',deployment.poolFactory);
@@ -86,6 +94,7 @@ export function factoryWalletAdapter({deployment,session,fetch:fetchImpl=globalT
   const inputRequest=value=>request('inputs',JSON.stringify(value),{'Content-Type':'application/json'});
   const reserveInput=deployment.taskPool?async(round,input,sessionId)=>{const value=await inputRequest({action:'claim',factory:deployment.factory,roundId:round.roundId,input,sessionId});return value.busy?false:value.lease;}:null;
   const renewInput=deployment.taskPool?async lease=>inputRequest({action:'renew',factory:deployment.factory,...lease}):null;
+  const demand=deployment.taskPool?async(sessionId,active)=>inputRequest({action:active?'demand':'idle',factory:deployment.factory,sessionId}):null;
   const releaseInput=deployment.taskPool?async lease=>inputRequest({action:'release',factory:deployment.factory,...lease}):null;
-  return {wallet,send,connection,contentStore,rpc,readBalances,reserveInput,renewInput,releaseInput,isSignedIn:()=>signedIn(session),assertMiningAuthorization:()=>{rpc.assertReady();auth(session);}};
+  return {wallet,send,connection,contentStore,rpc,readBalances,reserveInput,renewInput,releaseInput,demand,isSignedIn:()=>signedIn(session),assertMiningAuthorization:()=>{rpc.assertReady();auth(session);}};
 }

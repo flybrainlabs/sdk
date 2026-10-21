@@ -14,7 +14,7 @@ export class FactoryMiningContinuationV4 {
     if(this.pending)return this.pending;if(!this.eligible()||!this.client.snapshot?.recovery)return Promise.resolve(false);
     const generation=this.runner.generation,epoch=this.runner.poolEpoch,identity=this.client.identity?.publicKey;
     const beforeSend=()=>{if(!this.eligible()||generation!==this.runner.generation||epoch!==this.runner.poolEpoch||identity!==this.client.identity?.publicKey)throw Object.assign(new Error('MINING_SESSION_STOPPED'),{code:'MINING_SESSION_STOPPED'});};
-    this.pending=this.client.recoverTask({beforeSend}).then(()=>true).catch(error=>{if(error.code==='MINING_SESSION_STOPPED')return false;this.runner.pauseNow(error.code||'contract-continuation-error');this.onError(error);return false;}).finally(()=>this.pending=null);return this.pending;
+    this.pending=this.client.recoverTask({beforeSend}).then(()=>true).catch(error=>{if(error.code==='MINING_SESSION_STOPPED')return false;if(['RPC_UNAVAILABLE','RPC_RATE_LIMITED'].includes(error.code)||[429,503].includes(error.status))this.runner.disconnected(error,'network');else this.runner.pauseNow(error.code||'contract-continuation-error');this.onError(error);return false;}).finally(()=>this.pending=null);return this.pending;
   }
 }
 export function factoryTaskRecoveryV4(f,t,now){
@@ -38,8 +38,8 @@ export async function verifyFactoryRound(reader,r){
   if(t.state!==STATE.ACTIVE||f.activeIndex!==t.index||f.paused)throw new Error('Chain task is not open for computation');return expected;
 }
 export class FactoryMiningClientV4 {
-  constructor({deployment,wallet,send,contentStore,reserveInput=null,renewInput=null,releaseInput=null,connection=null,onSnapshot=()=>{},onConnection=()=>{},onEvent=()=>{}}){
-    Object.assign(this,{deployment,wallet,send,contentStore,reserveInput,renewInput,releaseInput,onSnapshot,onConnection,onEvent});this.reader=readerForDeployment(deployment,connection);this.rounds=new Map();this.generation=0;
+  constructor({deployment,wallet,send,contentStore,reserveInput=null,renewInput=null,releaseInput=null,demand=null,connection=null,onSnapshot=()=>{},onConnection=()=>{},onEvent=()=>{}}){
+    Object.assign(this,{deployment,wallet,send,contentStore,reserveInput,renewInput,releaseInput,demand,onSnapshot,onConnection,onEvent});this.reader=readerForDeployment(deployment,connection);this.rounds=new Map();this.generation=0;
     this.network={networkId:deployment.genesisHash,campaignId:deployment.factory,authorityId:deployment.policyHash,protocolVersion:4};this.specifications=new Map();
   }
   bindWallet(){this.identity=this.wallet?.publicKey?{publicKey:hex(new PublicKey(this.wallet.publicKey).toBytes())}:null;}
@@ -93,6 +93,7 @@ export class FactoryMiningClientV4 {
   async advance(){const snapshot=await this.sync();return snapshot.recovery?.kind==='advance'?this.recoverTask():snapshot;}
   async expire(){return this.recoverTask();}
   // Both methods are optional telemetry. They never create or select tasks.
-  async heartbeat(){} async reportWork(){}
+  async heartbeat(sessionId,phase){if(this.demand)return this.demand(sessionId,!['ended','paused','idle'].includes(phase));}
+  async reportWork(report){return this.heartbeat(report.sessionId,report.phase);}
   async dispose(){this.generation++;clearInterval(this.timer);for(const id of [this.factorySubscription,this.taskSubscription])if(id!==undefined)await this.reader.connection.removeAccountChangeListener(id);this.online=false;}
 }

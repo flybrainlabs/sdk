@@ -61,7 +61,8 @@
     "tests/factory_pool_v4.mjs": "tests/factory_pool_v4.mjs",
     "web/scientific-round-v5.mjs": "web/scientific-round-v5.mjs",
     "web/scientific-client-v5.mjs": "web/scientific-client-v5.mjs",
-    "web/scientific-wallet-policy-v5.mjs": "web/scientific-wallet-policy-v5.mjs"
+    "web/scientific-wallet-policy-v5.mjs": "web/scientific-wallet-policy-v5.mjs",
+    "tests/factory_pool_history_v4.mjs": "tests/factory_pool_history_v4.mjs"
   },
   "project": "flybrainlabs"
 }
